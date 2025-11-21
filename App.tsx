@@ -1,0 +1,612 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment } from './types';
+import { streamChatResponse, generateTitle } from './services/geminiService';
+import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon } from './components/Icon';
+import SettingsModal from './components/SettingsModal';
+
+const App: React.FC = () => {
+  // --- State ---
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [input, setInput] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [attachments, setAttachments] = useState<FileAttachment[]>([]);
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // --- Effects ---
+
+  // Check for Rust injected config on mount
+  useEffect(() => {
+    const rustConfig = window.RUST_APP_CONFIG;
+    if (rustConfig) {
+       setSettings(prev => ({
+          ...prev,
+          model: rustConfig.defaultModel || prev.model,
+          theme: rustConfig.initialTheme || prev.theme,
+          serverUrl: rustConfig.serverUrl || prev.serverUrl,
+          apiKey: rustConfig.apiKey || prev.apiKey
+       }));
+    }
+  }, []);
+
+  // Load from local storage on mount
+  useEffect(() => {
+    const storedSessions = localStorage.getItem('rust_chat_sessions');
+    const storedSettings = localStorage.getItem('rust_chat_settings');
+    
+    if (storedSessions) {
+      const parsedSessions = JSON.parse(storedSessions);
+      setSessions(parsedSessions);
+      if (parsedSessions.length > 0) {
+        setCurrentSessionId(parsedSessions[0].id);
+      }
+    } else {
+      createNewSession();
+    }
+
+    if (storedSettings) {
+      const parsed = JSON.parse(storedSettings);
+      // Ensure theme exists if old config loaded
+      if (!parsed.theme) parsed.theme = 'light'; 
+      setSettings(parsed);
+    }
+  }, []);
+
+  // Save to local storage
+  useEffect(() => {
+    if (sessions.length > 0) {
+      localStorage.setItem('rust_chat_sessions', JSON.stringify(sessions));
+    }
+  }, [sessions]);
+
+  useEffect(() => {
+    localStorage.setItem('rust_chat_settings', JSON.stringify(settings));
+  }, [settings]);
+
+  // Apply Theme
+  useEffect(() => {
+    const root = document.documentElement;
+    if (settings.theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+  }, [settings.theme]);
+
+  // Auto-scroll
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [sessions, currentSessionId, isStreaming]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'inherit'; // Reset to recalculate
+      const scrollHeight = textareaRef.current.scrollHeight;
+      textareaRef.current.style.height = `${Math.min(Math.max(scrollHeight, 56), 200)}px`; // Min 56px, Max 200px
+    }
+  }, [input]);
+
+  // --- Helpers ---
+
+  const getCurrentSession = () => sessions.find(s => s.id === currentSessionId);
+
+  const createNewSession = () => {
+    const newSession: ChatSession = {
+      id: uuidv4(),
+      title: 'New Chat',
+      messages: [],
+      lastUpdated: Date.now(),
+    };
+    setSessions(prev => [newSession, ...prev]);
+    setCurrentSessionId(newSession.id);
+    // Focus input on new chat
+    setTimeout(() => textareaRef.current?.focus(), 100);
+    return newSession.id;
+  };
+
+  const updateSessionMessages = (sessionId: string, messages: Message[]) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === sessionId) {
+        return { ...s, messages, lastUpdated: Date.now() };
+      }
+      return s;
+    }));
+  };
+
+  const updateSessionTitle = (sessionId: string, title: string) => {
+     setSessions(prev => prev.map(s => {
+      if (s.id === sessionId) return { ...s, title };
+      return s;
+    }));
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
+
+  // --- Core Logic ---
+
+  // Core function to handle streaming, decoupled from UI state inputs for flexibility (supports Redo)
+  const executeStream = async (
+    sessionId: string, 
+    historyMessages: Message[], 
+    userText: string, 
+    userAttachments: FileAttachment[]
+  ) => {
+    setIsStreaming(true);
+    abortControllerRef.current = new AbortController();
+
+    // 1. Create User Message
+    const newUserMsg: Message = {
+      id: uuidv4(),
+      role: Role.User,
+      text: userText,
+      attachments: userAttachments,
+      timestamp: Date.now(),
+    };
+
+    // 2. Create Placeholder Bot Message
+    const newBotMsg: Message = {
+      id: uuidv4(),
+      role: Role.Model,
+      text: '', 
+      timestamp: Date.now() + 1,
+    };
+
+    // 3. Update State with new messages
+    const updatedMessages = [...historyMessages, newUserMsg, newBotMsg];
+    updateSessionMessages(sessionId, updatedMessages);
+
+    try {
+      // Filter history for API (exclude the empty bot message we just added)
+      const historyForApi = updatedMessages.slice(0, -1); 
+
+      await streamChatResponse(
+        historyForApi.filter(m => m.role !== Role.Model || m.text.length > 0),
+        userText,
+        userAttachments,
+        settings,
+        (chunkText) => {
+          if (abortControllerRef.current?.signal.aborted) return;
+
+          setSessions(prev => prev.map(s => {
+            if (s.id === sessionId) {
+              const msgs = [...s.messages];
+              const lastMsg = msgs[msgs.length - 1];
+              if (lastMsg && lastMsg.role === Role.Model) {
+                lastMsg.text = chunkText;
+              }
+              return { ...s, messages: msgs };
+            }
+            return s;
+          }));
+        }
+      );
+    } catch (error: any) {
+       setSessions(prev => prev.map(s => {
+            if (s.id === sessionId) {
+              const msgs = [...s.messages];
+              const lastMsg = msgs[msgs.length - 1];
+              if (lastMsg) {
+                lastMsg.text = `Error: ${error.message || "Failed to generate response"}. Check API settings.`;
+                lastMsg.isError = true;
+              }
+              return { ...s, messages: msgs };
+            }
+            return s;
+       }));
+    } finally {
+      setIsStreaming(false);
+      abortControllerRef.current = null;
+      setTimeout(() => textareaRef.current?.focus(), 50);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if ((!input.trim() && attachments.length === 0) || isStreaming) return;
+
+    let activeSessionId = currentSessionId;
+    let currentHistory: Message[] = [];
+
+    if (!activeSessionId) {
+      activeSessionId = createNewSession();
+    } else {
+      const session = sessions.find(s => s.id === activeSessionId);
+      if (session) currentHistory = session.messages;
+    }
+
+    if (!activeSessionId) return;
+
+    const textToSend = input;
+    const attachmentsToSend = attachments;
+
+    // Clear Input immediately
+    setInput('');
+    setAttachments([]);
+
+    // Generate title if first message
+    if (currentHistory.length === 0) {
+      // Pass settings to generateTitle to ensure it uses the correct server/key
+      generateTitle(textToSend, settings).then(t => {
+        if (activeSessionId) updateSessionTitle(activeSessionId, t);
+      });
+    }
+
+    await executeStream(activeSessionId, currentHistory, textToSend, attachmentsToSend);
+  };
+
+  const handleStopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsStreaming(false);
+    }
+  };
+
+  const handleResend = (botMessageIndex: number) => {
+    if (isStreaming) return;
+    const session = getCurrentSession();
+    if (!session) return;
+
+    const userMsgIndex = botMessageIndex - 1;
+    if (userMsgIndex < 0) return;
+    
+    const userMessage = session.messages[userMsgIndex];
+    if (userMessage.role !== Role.User) return; 
+
+    // Critical: Slice history to REMOVE the old User message and the Bot message.
+    // We want the state to effectively "rewind" to before the user spoke.
+    const historyBeforeTurn = session.messages.slice(0, userMsgIndex);
+    
+    // Update state immediately to remove the old interaction
+    updateSessionMessages(session.id, historyBeforeTurn);
+    
+    // Trigger stream with the cleaned history
+    executeStream(session.id, historyBeforeTurn, userMessage.text, userMessage.attachments || []);
+  };
+
+  const handleUserRevise = (userMsgIndex: number) => {
+      if (isStreaming) return;
+      const session = getCurrentSession();
+      if (!session) return;
+
+      const userMessage = session.messages[userMsgIndex];
+      
+      // Remove this message and everything after it
+      const newHistory = session.messages.slice(0, userMsgIndex);
+      updateSessionMessages(session.id, newHistory);
+      
+      // Put content back into input
+      setInput(userMessage.text);
+      setAttachments(userMessage.attachments || []);
+      textareaRef.current?.focus();
+  }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const filesArray = Array.from(e.target.files) as File[];
+      const newAttachments: FileAttachment[] = [];
+
+      for (const file of filesArray) {
+        try {
+          const text = await file.text();
+          newAttachments.push({
+            name: file.name,
+            type: file.type,
+            content: text
+          });
+        } catch (err) {
+          console.error("Failed to read file", file.name);
+        }
+      }
+      setAttachments(prev => [...prev, ...newAttachments]);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const deleteSession = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (window.confirm("Are you sure you want to delete this chat history?")) {
+      const newSessions = sessions.filter(s => s.id !== id);
+      setSessions(newSessions);
+      if (currentSessionId === id) {
+        setCurrentSessionId(newSessions.length > 0 ? newSessions[0].id : null);
+      }
+    }
+  };
+
+  const toggleTheme = () => {
+    setSettings(prev => ({ ...prev, theme: prev.theme === 'dark' ? 'light' : 'dark' }));
+  };
+
+  // --- Render ---
+
+  const currentSession = getCurrentSession();
+
+  return (
+    <div className="flex h-screen w-full bg-white dark:bg-dark-950 text-gray-900 dark:text-gray-100 transition-colors duration-300">
+      
+      {/* Sidebar */}
+      <div className="w-64 bg-gray-50 dark:bg-dark-900 border-r border-gray-200 dark:border-dark-800 flex flex-col hidden md:flex transition-all duration-300">
+        <div className="p-4 flex items-center gap-2">
+           <div className="w-8 h-8 bg-gray-900 dark:bg-white rounded-lg flex items-center justify-center font-bold text-white dark:text-black shadow-sm">R</div>
+           <span className="font-bold text-lg tracking-tight text-gray-900 dark:text-gray-100">RustClient</span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
+          <button 
+            onClick={() => createNewSession()}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 hover:bg-gray-100 dark:hover:bg-dark-700 text-gray-900 dark:text-gray-100 rounded-xl transition-all text-sm font-medium shadow-sm mb-4 group"
+          >
+            <span className="text-xl leading-none font-light text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">+</span> 
+            <span>New Chat</span>
+          </button>
+
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wider px-3 mb-2 mt-6">History</div>
+          
+          {sessions.map(session => (
+            <div 
+              key={session.id}
+              onClick={() => setCurrentSessionId(session.id)}
+              className={`group relative flex items-center px-3 py-2.5 text-sm rounded-lg cursor-pointer transition-all ${
+                currentSessionId === session.id 
+                  ? 'bg-gray-200 dark:bg-dark-800 text-gray-900 dark:text-white font-medium shadow-sm' 
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-dark-800'
+              }`}
+            >
+              <span className="truncate flex-1 pr-6">{session.title}</span>
+              <button 
+                onClick={(e) => deleteSession(e, session.id)}
+                className="absolute right-2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="p-4 border-t border-gray-200 dark:border-dark-800 space-y-1">
+          <button 
+            onClick={toggleTheme}
+            className="flex items-center gap-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors text-sm w-full px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-dark-800"
+          >
+            {settings.theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+            <span>{settings.theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+          </button>
+          <button 
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex items-center gap-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors text-sm w-full px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-dark-800"
+          >
+            <SettingsIcon />
+            <span>Settings</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col h-full relative bg-white dark:bg-dark-950 transition-colors duration-300">
+        
+        {/* Mobile Header */}
+        <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
+           <span className="font-bold text-gray-900 dark:text-white">RustClient</span>
+           <div className="flex gap-4">
+              <button onClick={toggleTheme} className="text-gray-600 dark:text-gray-400">
+                 {settings.theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+              </button>
+              <button onClick={() => setIsSettingsOpen(true)} className="text-gray-600 dark:text-gray-400">
+                <SettingsIcon />
+              </button>
+           </div>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
+          {!currentSession || currentSession.messages.length === 0 ? (
+             <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
+                <div className="w-20 h-20 mb-6 rounded-2xl bg-gray-100 dark:bg-dark-900 flex items-center justify-center">
+                    {/* Neutral robot placeholder */}
+                    <div className="text-gray-300 dark:text-gray-700">
+                      <BotIcon /> 
+                    </div>
+                </div>
+                <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-200 mb-2">Welcome to RustClient</h3>
+                <p className="text-center max-w-md text-gray-500 dark:text-gray-500">
+                  Start a conversation by typing a message or uploading a file below.
+                </p>
+             </div>
+          ) : (
+            currentSession.messages.map((msg, index) => (
+              <div key={msg.id} className={`flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}>
+                {/* Avatar */}
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-1 border border-gray-200 dark:border-gray-700 ${
+                  msg.role === Role.User 
+                    ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300' 
+                    : 'bg-black dark:bg-white text-white dark:text-black shadow-md'
+                }`}>
+                  {msg.role === Role.User ? <UserIcon /> : <BotIcon />}
+                </div>
+
+                {/* Content */}
+                <div className={`flex flex-col max-w-[85%] lg:max-w-[75%] ${msg.role === Role.User ? 'items-end' : 'items-start'}`}>
+                   
+                   {/* Name & Time */}
+                   <div className="flex items-center gap-2 mb-1 px-1">
+                      <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                        {msg.role === Role.User ? 'You' : 'AI Assistant'}
+                      </span>
+                   </div>
+
+                   <div className={`px-5 py-3.5 rounded-2xl shadow-sm text-sm md:text-base leading-7 ${
+                     msg.role === Role.User 
+                       ? 'bg-gray-100 dark:bg-dark-800 text-gray-900 dark:text-gray-100 rounded-tr-none' 
+                       : `text-gray-900 dark:text-gray-100 ${msg.isError ? 'text-red-600 dark:text-red-400' : ''}`
+                   }`}>
+                     {msg.attachments && msg.attachments.length > 0 && (
+                       <div className="mb-3 pb-2 border-b border-gray-200 dark:border-gray-700 text-xs flex flex-wrap gap-2">
+                         {msg.attachments.map((file, i) => (
+                            <span key={i} className="flex items-center gap-1 bg-white dark:bg-dark-900 px-2 py-1 rounded border border-gray-200 dark:border-dark-700">
+                              📄 {file.name}
+                            </span>
+                         ))}
+                       </div>
+                     )}
+                     
+                     {/* Markdown Rendering */}
+                     {msg.role === Role.Model ? (
+                        <div className="markdown-body">
+                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                             {msg.text}
+                           </ReactMarkdown>
+                        </div>
+                     ) : (
+                        <div className="whitespace-pre-wrap">{msg.text}</div>
+                     )}
+                   </div>
+                   
+                   {/* Message Actions - Persistent for Bot */}
+                   <div className={`flex items-center gap-3 mt-2 px-1 transition-opacity duration-200 ${msg.role === Role.User ? 'justify-end opacity-0 hover:opacity-100' : 'justify-start'}`}>
+                       {/* User Actions */}
+                       {msg.role === Role.User && !isStreaming && (
+                         <button 
+                           onClick={() => handleUserRevise(index)}
+                           className="text-xs font-medium text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1 transition-colors bg-gray-50 dark:bg-dark-900 px-2 py-1 rounded"
+                           title="Edit to resend"
+                         >
+                           <RefreshIcon /> Revise
+                         </button>
+                       )}
+
+                       {/* Bot Actions - Always visible after generation */}
+                       {msg.role === Role.Model && !isStreaming && !msg.isError && (
+                          <>
+                            <button 
+                              onClick={() => handleResend(index)}
+                              className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"
+                              title="Regenerate Response"
+                            >
+                               <RefreshIcon /> Redo
+                            </button>
+                            <button 
+                              onClick={() => copyToClipboard(msg.text)}
+                              className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"
+                              title="Copy Text"
+                            >
+                               <CopyIcon /> Copy
+                            </button>
+                            <button 
+                              onClick={() => {/* Share Logic */}}
+                              className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"
+                              title="Share Conversation"
+                            >
+                               <ShareIcon /> Share
+                            </button>
+                          </>
+                       )}
+                   </div>
+                </div>
+              </div>
+            ))
+          )}
+          <div ref={messagesEndRef} className="h-4" />
+        </div>
+
+        {/* Input Area */}
+        <div className="p-4 md:p-6 bg-white dark:bg-dark-950 transition-colors duration-300 z-20">
+           <div className="max-w-4xl mx-auto relative">
+              
+              {/* File Preview */}
+              {attachments.length > 0 && (
+                <div className="absolute bottom-full left-0 mb-3 flex flex-wrap gap-2">
+                   {attachments.map((f, i) => (
+                     <div key={i} className="flex items-center gap-2 bg-gray-100 dark:bg-dark-800 text-xs text-gray-600 dark:text-gray-300 pl-3 pr-2 py-1.5 rounded-full border border-gray-200 dark:border-dark-700 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+                        <span className="truncate max-w-[120px] font-medium">{f.name}</span>
+                        <button 
+                          onClick={() => setAttachments(prev => prev.filter((_, idx) => idx !== i))} 
+                          className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-gray-200 dark:hover:bg-dark-600 text-gray-400 transition-colors"
+                        >
+                          ×
+                        </button>
+                     </div>
+                   ))}
+                </div>
+              )}
+
+              <div className="relative flex items-end gap-2 bg-gray-50 dark:bg-dark-900 border border-gray-300 dark:border-dark-700 rounded-3xl shadow-sm focus-within:shadow-md focus-within:border-gray-400 dark:focus-within:border-gray-500 transition-all p-2">
+                 <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors rounded-full hover:bg-gray-200 dark:hover:bg-dark-800 flex-shrink-0"
+                    title="Upload files"
+                  >
+                    <PaperClipIcon />
+                 </button>
+                 <input 
+                   type="file" 
+                   multiple 
+                   ref={fileInputRef} 
+                   className="hidden" 
+                   onChange={handleFileUpload}
+                  />
+
+                 <textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                    placeholder="Message RustClient..."
+                    className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none py-3 px-4 max-h-[200px] min-h-[24px] leading-6 custom-scrollbar"
+                    rows={1}
+                 />
+
+                 {isStreaming ? (
+                   <button 
+                     onClick={handleStopGeneration}
+                     className="p-2 mb-1 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors animate-pulse flex-shrink-0"
+                   >
+                     <StopIcon />
+                   </button>
+                 ) : (
+                   <button 
+                     onClick={() => handleSendMessage()}
+                     disabled={!input.trim() && attachments.length === 0}
+                     className="p-2 mb-1 bg-gray-900 dark:bg-white text-white dark:text-black rounded-full hover:bg-gray-700 dark:hover:bg-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-md flex-shrink-0"
+                   >
+                     <SendIcon />
+                   </button>
+                 )}
+              </div>
+              <div className="text-center mt-3">
+                 <p className="text-[10px] text-gray-400 dark:text-gray-600">
+                    AI can make mistakes. Please verify important information.
+                 </p>
+              </div>
+           </div>
+        </div>
+      </div>
+
+      <SettingsModal 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)}
+        settings={settings}
+        onSettingsChange={setSettings}
+      />
+
+    </div>
+  );
+};
+
+export default App;
