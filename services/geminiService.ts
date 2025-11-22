@@ -49,10 +49,12 @@ const prepareMessages = (
 };
 
 const getEndpoint = (baseUrl: string) => {
-  const cleanBase = baseUrl.replace(/\/+$/, '');
-  // If the user just put in the base domain, append v1/chat/completions
-  // However, usually users provide the API base (e.g. http://localhost:11434/v1)
-  // We will append /chat/completions
+  // Common Fix: Browsers cannot connect to 0.0.0.0, map it to localhost
+  let cleanBase = baseUrl.replace('0.0.0.0', '127.0.0.1');
+  cleanBase = cleanBase.replace(/\/+$/, '');
+  
+  // If user enters base URL without /chat/completions, append it
+  // Most OpenAI compatible servers mount at /v1/chat/completions
   return `${cleanBase}/chat/completions`;
 };
 
@@ -66,6 +68,9 @@ export const streamChatResponse = async (
 
   const messages = prepareMessages(history, newMessage, attachments, settings);
   const url = getEndpoint(settings.serverUrl);
+
+  // Fallback key for local servers that don't require auth but expect a non-empty header
+  const apiKey = settings.apiKey?.trim() || "sk-no-key-required";
 
   try {
     const body: any = {
@@ -86,14 +91,22 @@ export const streamChatResponse = async (
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${settings.apiKey}`
+        'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify(body)
     });
 
     if (!response.ok) {
         const errText = await response.text();
-        throw new Error(`API Request Failed (${response.status}): ${errText}`);
+        let errMsg = `API Request Failed (${response.status})`;
+        try {
+            const json = JSON.parse(errText);
+            if (json.error && json.error.message) errMsg += `: ${json.error.message}`;
+            else errMsg += `: ${errText}`;
+        } catch {
+            errMsg += `: ${errText}`;
+        }
+        throw new Error(errMsg);
     }
 
     if (!response.body) throw new Error("No response body received from server.");
@@ -135,27 +148,33 @@ export const streamChatResponse = async (
 
     return fullText;
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Chat Stream Error:", error);
+    if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
+       throw new Error("Connection failed. Check if server is running and accessible (CORS issues or invalid URL).");
+    }
     throw error;
   }
 };
 
 export const generateTitle = async (firstMessage: string, settings: AppSettings): Promise<string> => {
-  if (!settings.apiKey && !settings.serverUrl) return "New Chat";
+  // Try to generate title, but fail silently to "New Chat" if server is down
+  if (!settings.serverUrl) return "New Chat";
   
+  const apiKey = settings.apiKey?.trim() || "sk-no-key-required";
+
   try {
     const url = getEndpoint(settings.serverUrl);
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${settings.apiKey}`
+        'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
         model: settings.model,
         messages: [
-          { role: 'system', content: 'You are a helper. Generate a very short title (max 5 words) for the following user message. Do not use quotes.' },
+          { role: 'system', content: 'Generate a title (max 5 words) for this content. Do not use quotes.' },
           { role: 'user', content: firstMessage }
         ],
         stream: false,
@@ -170,7 +189,7 @@ export const generateTitle = async (firstMessage: string, settings: AppSettings)
     
     return title || "New Chat";
   } catch (e) {
-    console.error("Failed to generate title", e);
+    // Silently fail for title generation
     return "New Chat";
   }
 };
