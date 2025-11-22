@@ -50,11 +50,17 @@ const prepareMessages = (
 
 const getEndpoint = (baseUrl: string) => {
   // Common Fix: Browsers cannot connect to 0.0.0.0, map it to localhost
-  let cleanBase = baseUrl.replace('0.0.0.0', '127.0.0.1');
-  cleanBase = cleanBase.replace(/\/+$/, '');
+  let cleanBase = baseUrl.trim().replace('0.0.0.0', '127.0.0.1');
+  cleanBase = cleanBase.replace(/\/+$/, ''); // Remove trailing slash
   
-  // If user enters base URL without /chat/completions, append it
-  // Most OpenAI compatible servers mount at /v1/chat/completions
+  // Heuristic: If the user put the full path, use it. Otherwise assume standard openai structure.
+  if (cleanBase.endsWith('/chat/completions')) return cleanBase;
+  
+  // If ends with /v1, append /chat/completions
+  if (cleanBase.endsWith('/v1')) return `${cleanBase}/chat/completions`;
+  
+  // Default fallback: append /v1/chat/completions if strictly domain
+  // But user said they put /v1/ in the input, so standard append is safer:
   return `${cleanBase}/chat/completions`;
 };
 
@@ -69,8 +75,15 @@ export const streamChatResponse = async (
   const messages = prepareMessages(history, newMessage, attachments, settings);
   const url = getEndpoint(settings.serverUrl);
 
-  // Fallback key for local servers that don't require auth but expect a non-empty header
-  const apiKey = settings.apiKey?.trim() || "sk-no-key-required";
+  // Only attach Authorization header if a key is actually present.
+  // Sending an empty Bearer token can cause some local servers to reject the request.
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  
+  if (settings.apiKey && settings.apiKey.trim().length > 0) {
+    headers['Authorization'] = `Bearer ${settings.apiKey.trim()}`;
+  }
 
   try {
     const body: any = {
@@ -82,18 +95,17 @@ export const streamChatResponse = async (
       max_tokens: settings.maxOutputTokens,
     };
 
-    // Add top_k if supported/configured (non-standard OpenAI, but common in local LLMs)
     if (settings.topK > 0) {
       body.top_k = settings.topK;
     }
 
+    console.log(`[GeminiService] POST ${url}`, body);
+
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify(body)
+      headers: headers,
+      body: JSON.stringify(body),
+      // credentials: 'omit', // Optional: sometimes helps with local servers but breaks cookies
     });
 
     if (!response.ok) {
@@ -151,26 +163,28 @@ export const streamChatResponse = async (
   } catch (error: any) {
     console.error("Chat Stream Error:", error);
     if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
-       throw new Error("Connection failed. Check if server is running and accessible (CORS issues or invalid URL).");
+       // This is the standard error for CORS or Connection Refused
+       throw new Error(`Connection failed. The browser blocked the request to ${url}. This is usually a CORS issue. Ensure your local server is running with CORS enabled (e.g., --cors-allow-origins '*').`);
     }
     throw error;
   }
 };
 
 export const generateTitle = async (firstMessage: string, settings: AppSettings): Promise<string> => {
-  // Try to generate title, but fail silently to "New Chat" if server is down
   if (!settings.serverUrl) return "New Chat";
   
-  const apiKey = settings.apiKey?.trim() || "sk-no-key-required";
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (settings.apiKey && settings.apiKey.trim().length > 0) {
+    headers['Authorization'] = `Bearer ${settings.apiKey.trim()}`;
+  }
 
   try {
     const url = getEndpoint(settings.serverUrl);
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
+      headers: headers,
       body: JSON.stringify({
         model: settings.model,
         messages: [
@@ -189,7 +203,6 @@ export const generateTitle = async (firstMessage: string, settings: AppSettings)
     
     return title || "New Chat";
   } catch (e) {
-    // Silently fail for title generation
     return "New Chat";
   }
 };
