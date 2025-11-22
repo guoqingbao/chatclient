@@ -53,14 +53,6 @@ const getEndpoint = (baseUrl: string) => {
   if (!baseUrl) return '';
   let cleanBase = baseUrl.trim();
 
-  // Allow relative paths (e.g. "/v1") to use the Vite Proxy
-  if (cleanBase.startsWith('/')) {
-     cleanBase = cleanBase.replace(/\/+$/, '');
-     if (cleanBase.endsWith('/chat/completions')) return cleanBase;
-     if (cleanBase.endsWith('/v1')) return `${cleanBase}/chat/completions`;
-     return `${cleanBase}/chat/completions`;
-  }
-  
   // Fix: Browsers cannot connect to 0.0.0.0 directly.
   cleanBase = cleanBase.replace('0.0.0.0', 'localhost');
   
@@ -90,21 +82,7 @@ export const streamChatResponse = async (
 ): Promise<string> => {
 
   const messages = prepareMessages(history, newMessage, attachments, settings);
-  let url = getEndpoint(settings.serverUrl);
-
-  // AUTO-PROXY FIX:
-  // If the user is trying to hit localhost:8000, the browser will block it via CORS 
-  // because the backend middleware is ordered incorrectly. 
-  // We force it to use the relative path "/v1" so it goes through the Vite Dev Proxy 
-  // (configured in vite.config.ts), which effectively bypasses CORS.
-  if (url.includes('localhost:8000') || url.includes('127.0.0.1:8000')) {
-    try {
-      const urlObj = new URL(url);
-      url = urlObj.pathname; // e.g. "/v1/chat/completions"
-    } catch (e) {
-      // Fallback if URL parsing fails
-    }
-  }
+  const url = getEndpoint(settings.serverUrl);
 
   // Basic headers
   const headers: Record<string, string> = {
@@ -136,10 +114,8 @@ export const streamChatResponse = async (
       method: 'POST',
       headers: headers,
       body: JSON.stringify(body),
-      // CRITICAL FIX: 'omit' prevents browser from sending cookies/auth causing CORS failures
-      // when server sends 'Access-Control-Allow-Origin: *'
+      // 'omit' is safer for local servers responding with wildcard CORS
       credentials: 'omit', 
-      mode: 'cors',
     });
 
     if (!response.ok) {
@@ -197,7 +173,7 @@ export const streamChatResponse = async (
   } catch (error: any) {
     console.error("Chat Stream Error:", error);
     if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
-       throw new Error(`Connection failed to ${url}. The browser blocked the request. This is usually a CORS issue. If using a local server, ensure it is running and allows CORS.`);
+       throw new Error(`Connection failed to ${url}. Check if server is running and accessible (CORS issues or invalid URL).`);
     }
     throw error;
   }
@@ -214,16 +190,8 @@ export const generateTitle = async (firstMessage: string, settings: AppSettings)
   }
 
   try {
-    let url = getEndpoint(settings.serverUrl);
+    const url = getEndpoint(settings.serverUrl);
     
-    // Apply same proxy bypass logic for title generation
-    if (url.includes('localhost:8000') || url.includes('127.0.0.1:8000')) {
-        try {
-          const urlObj = new URL(url);
-          url = urlObj.pathname;
-        } catch (e) {}
-    }
-
     const response = await fetch(url, {
       method: 'POST',
       headers: headers,
@@ -236,8 +204,7 @@ export const generateTitle = async (firstMessage: string, settings: AppSettings)
         stream: false,
         max_tokens: 15
       }),
-      credentials: 'omit',
-      mode: 'cors'
+      credentials: 'omit'
     });
 
     if (!response.ok) return "New Chat";

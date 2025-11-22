@@ -1,5 +1,5 @@
 {
-  "name": "RustLike Chat UI (Gemini Edition)",
-  "description": "A modern, beautiful chat interface supporting file uploads, history management, and advanced model configurations, powered by Google Gemini.",
+  "name": "RustLike Chat UI",
+  "description": "A modern, beautiful chat interface supporting file uploads, history management, and advanced model configurations for OpenAI-compatible servers.",
   "requestFramePermissions": []
 }
