@@ -6,5 +6,7 @@ export default defineConfig({
   server: {
     host: true, // Listen on all addresses (0.0.0.0)
     port: 5173,
+    strictPort: false,
+    cors: true, // Enable CORS for the dev server itself
   }
 });

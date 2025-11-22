@@ -49,8 +49,17 @@ const prepareMessages = (
 };
 
 const getEndpoint = (baseUrl: string) => {
-  // Common Fix: Browsers cannot connect to 0.0.0.0, map it to localhost
-  let cleanBase = baseUrl.trim().replace('0.0.0.0', '127.0.0.1');
+  if (!baseUrl) return '';
+  
+  // Fix: Browsers cannot connect to 0.0.0.0 directly.
+  // Using 'localhost' is often safer than 127.0.0.1 on Mac for resolution.
+  let cleanBase = baseUrl.trim().replace('0.0.0.0', 'localhost');
+  
+  // Ensure protocol
+  if (!cleanBase.startsWith('http')) {
+    cleanBase = 'http://' + cleanBase;
+  }
+  
   cleanBase = cleanBase.replace(/\/+$/, ''); // Remove trailing slash
   
   // Heuristic: If the user put the full path, use it. Otherwise assume standard openai structure.
@@ -59,8 +68,7 @@ const getEndpoint = (baseUrl: string) => {
   // If ends with /v1, append /chat/completions
   if (cleanBase.endsWith('/v1')) return `${cleanBase}/chat/completions`;
   
-  // Default fallback: append /v1/chat/completions if strictly domain
-  // But user said they put /v1/ in the input, so standard append is safer:
+  // Default fallback
   return `${cleanBase}/chat/completions`;
 };
 
@@ -75,12 +83,12 @@ export const streamChatResponse = async (
   const messages = prepareMessages(history, newMessage, attachments, settings);
   const url = getEndpoint(settings.serverUrl);
 
-  // Only attach Authorization header if a key is actually present.
-  // Sending an empty Bearer token can cause some local servers to reject the request.
+  // Basic headers
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   
+  // Only attach Authorization if explicitly provided.
   if (settings.apiKey && settings.apiKey.trim().length > 0) {
     headers['Authorization'] = `Bearer ${settings.apiKey.trim()}`;
   }
@@ -99,13 +107,16 @@ export const streamChatResponse = async (
       body.top_k = settings.topK;
     }
 
-    console.log(`[GeminiService] POST ${url}`, body);
+    console.log(`[Client] POST ${url}`, body);
 
     const response = await fetch(url, {
       method: 'POST',
       headers: headers,
       body: JSON.stringify(body),
-      // credentials: 'omit', // Optional: sometimes helps with local servers but breaks cookies
+      // CRITICAL FIX: 'omit' prevents browser from sending cookies/auth causing CORS failures
+      // when server sends 'Access-Control-Allow-Origin: *'
+      credentials: 'omit', 
+      mode: 'cors',
     });
 
     if (!response.ok) {
@@ -163,8 +174,7 @@ export const streamChatResponse = async (
   } catch (error: any) {
     console.error("Chat Stream Error:", error);
     if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
-       // This is the standard error for CORS or Connection Refused
-       throw new Error(`Connection failed. The browser blocked the request to ${url}. This is usually a CORS issue. Ensure your local server is running with CORS enabled (e.g., --cors-allow-origins '*').`);
+       throw new Error(`Connection failed to ${url}. The browser blocked the request. This is likely a CORS issue on the server, or the server is not reachable.`);
     }
     throw error;
   }
@@ -193,7 +203,9 @@ export const generateTitle = async (firstMessage: string, settings: AppSettings)
         ],
         stream: false,
         max_tokens: 15
-      })
+      }),
+      credentials: 'omit',
+      mode: 'cors'
     });
 
     if (!response.ok) return "New Chat";
