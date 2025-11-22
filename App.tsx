@@ -7,6 +7,46 @@ import { streamChatResponse, generateTitle } from './services/geminiService';
 import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
+// --- Helper Component for Thinking ---
+const ThinkingProcess = ({ thought, isComplete }: { thought: string, isComplete: boolean }) => {
+  const [isOpen, setIsOpen] = useState(!isComplete);
+
+  // Auto-collapse when complete, auto-expand while thinking
+  useEffect(() => {
+    if (isComplete) {
+      setIsOpen(false);
+    } else {
+      setIsOpen(true);
+    }
+  }, [isComplete]);
+
+  return (
+    <div className="mb-3 border-l-2 border-gray-200 dark:border-dark-700 pl-3 ml-1">
+      <button 
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-2 text-xs font-medium text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors select-none"
+      >
+        <span className="text-lg leading-none">
+            {isOpen ? '▾' : '▸'}
+        </span>
+        {isComplete ? (
+          <span>Thought Process</span>
+        ) : (
+          <span className="animate-pulse flex items-center gap-1">
+            Thinking<span className="animate-bounce">.</span><span className="animate-bounce delay-75">.</span><span className="animate-bounce delay-150">.</span>
+          </span>
+        )}
+      </button>
+      
+      {isOpen && (
+        <div className="mt-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-dark-900 p-3 rounded-md whitespace-pre-wrap leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
+          {thought}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const App: React.FC = () => {
   // --- State ---
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
@@ -138,6 +178,21 @@ const App: React.FC = () => {
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
+  };
+
+  // Parse message text to separate <think> blocks
+  const parseMessageContent = (text: string) => {
+    const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/;
+    const match = text.match(thinkRegex);
+
+    if (match) {
+      const thoughtContent = match[1];
+      const isComplete = text.includes('</think>');
+      const mainContent = text.replace(match[0], '').trim();
+      return { hasThought: true, thought: thoughtContent, isComplete, mainContent };
+    }
+    
+    return { hasThought: false, thought: '', isComplete: true, mainContent: text };
   };
 
   // --- Core Logic ---
@@ -431,7 +486,11 @@ const App: React.FC = () => {
                 </p>
              </div>
           ) : (
-            currentSession.messages.map((msg, index) => (
+            currentSession.messages.map((msg, index) => {
+              // Parse logic for Model messages
+              const contentParts = msg.role === Role.Model ? parseMessageContent(msg.text) : null;
+
+              return (
               <div key={msg.id} className={`flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}>
                 {/* Avatar */}
                 <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-1 border border-gray-200 dark:border-gray-700 ${
@@ -470,8 +529,11 @@ const App: React.FC = () => {
                      {/* Markdown Rendering */}
                      {msg.role === Role.Model ? (
                         <div className="markdown-body">
+                           {contentParts && contentParts.hasThought && (
+                             <ThinkingProcess thought={contentParts.thought} isComplete={contentParts.isComplete} />
+                           )}
                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                             {msg.text}
+                             {contentParts ? contentParts.mainContent : msg.text}
                            </ReactMarkdown>
                         </div>
                      ) : (
@@ -521,7 +583,7 @@ const App: React.FC = () => {
                    </div>
                 </div>
               </div>
-            ))
+            )})}
           )}
           <div ref={messagesEndRef} className="h-4" />
         </div>
