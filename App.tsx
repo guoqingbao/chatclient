@@ -9,11 +9,31 @@ import SettingsModal from './components/SettingsModal';
 
 const App: React.FC = () => {
   // --- State ---
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
+    const stored = localStorage.getItem('rust_chat_sessions');
+    return stored ? JSON.parse(stored) : [];
+  });
+
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  
+  // Initialize settings from localStorage immediately to prevent default override
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    const stored = localStorage.getItem('rust_chat_settings');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        // Merge with defaults to ensure all fields exist (handling upgrades)
+        return { ...DEFAULT_SETTINGS, ...parsed };
+      } catch (e) {
+        console.error("Failed to parse stored settings", e);
+        return DEFAULT_SETTINGS;
+      }
+    }
+    return DEFAULT_SETTINGS;
+  });
+
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   
@@ -24,7 +44,7 @@ const App: React.FC = () => {
 
   // --- Effects ---
 
-  // Check for Rust injected config on mount
+  // Check for Rust injected config on mount (overrides local storage if present)
   useEffect(() => {
     const rustConfig = window.RUST_APP_CONFIG;
     if (rustConfig) {
@@ -38,26 +58,12 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Load from local storage on mount
+  // Initial Session Setup
   useEffect(() => {
-    const storedSessions = localStorage.getItem('rust_chat_sessions');
-    const storedSettings = localStorage.getItem('rust_chat_settings');
-    
-    if (storedSessions) {
-      const parsedSessions = JSON.parse(storedSessions);
-      setSessions(parsedSessions);
-      if (parsedSessions.length > 0) {
-        setCurrentSessionId(parsedSessions[0].id);
-      }
-    } else {
+    if (sessions.length > 0 && !currentSessionId) {
+      setCurrentSessionId(sessions[0].id);
+    } else if (sessions.length === 0) {
       createNewSession();
-    }
-
-    if (storedSettings) {
-      const parsed = JSON.parse(storedSettings);
-      // Ensure theme exists if old config loaded
-      if (!parsed.theme) parsed.theme = 'light'; 
-      setSettings(parsed);
     }
   }, []);
 

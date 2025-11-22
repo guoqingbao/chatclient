@@ -1,3 +1,4 @@
+
 export enum Role {
   User = 'user',
   Model = 'model',
@@ -61,7 +62,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   systemInstruction: 'You are a helpful, coding-expert AI assistant. Use Markdown for formatting.',
   language: 'en',
   theme: 'light',
-  // Google Gemini OpenAI-compatible endpoint
-  serverUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', 
+  // Default to Local OpenAI-compatible endpoint
+  serverUrl: 'http://localhost:8000/v1/', 
   apiKey: '',
 };
