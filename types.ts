@@ -1,4 +1,3 @@
-
 export enum Role {
   User = 'user',
   Model = 'model',
@@ -37,19 +36,22 @@ export interface AppSettings {
   theme: 'light' | 'dark';
   serverUrl: string;
   apiKey: string;
+  contextCache: boolean;
+  generateTitles: boolean;
 }
 
-// Interface for configuration injected by the Rust host
-export interface RustAppConfig {
-  serverUrl?: string; // For future OpenAI compatible endpoint usage
-  apiKey?: string;    // Pre-filled API key
+// Interface for configuration injected by the Host
+export interface ChatAppConfig {
+  serverUrl?: string; 
+  apiKey?: string;    
   defaultModel?: string;
   initialTheme?: 'light' | 'dark';
 }
 
 declare global {
   interface Window {
-    RUST_APP_CONFIG?: RustAppConfig;
+    CHAT_APP_CONFIG?: ChatAppConfig;
+    RUST_APP_CONFIG?: ChatAppConfig; // Backward compatibility
   }
 }
 
@@ -58,11 +60,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   temperature: 0.7,
   topK: 0, 
   topP: 0.95,
-  maxOutputTokens: 2048,
+  maxOutputTokens: 32768,
   systemInstruction: 'You are a helpful, coding-expert AI assistant. Use Markdown for formatting.',
   language: 'en',
   theme: 'light',
-  // Default to Local OpenAI-compatible endpoint
   serverUrl: 'http://localhost:8000/v1/', 
   apiKey: '',
+  contextCache: true,
+  generateTitles: false,
 };

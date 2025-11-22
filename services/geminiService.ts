@@ -1,4 +1,3 @@
-
 import { Message, Role, AppSettings, FileAttachment } from "../types";
 
 // Helper to prepare messages for OpenAI format
@@ -63,17 +62,14 @@ const getEndpoint = (baseUrl: string) => {
   
   cleanBase = cleanBase.replace(/\/+$/, ''); // Remove trailing slash
   
-  // Heuristic: If the user put the full path, use it. Otherwise assume standard openai structure.
   if (cleanBase.endsWith('/chat/completions')) return cleanBase;
-  
-  // If ends with /v1, append /chat/completions
   if (cleanBase.endsWith('/v1')) return `${cleanBase}/chat/completions`;
   
-  // Default fallback
   return `${cleanBase}/chat/completions`;
 };
 
 export const streamChatResponse = async (
+  sessionId: string,
   history: Message[],
   newMessage: string,
   attachments: FileAttachment[],
@@ -89,7 +85,6 @@ export const streamChatResponse = async (
     'Content-Type': 'application/json',
   };
   
-  // Only attach Authorization if explicitly provided.
   if (settings.apiKey && settings.apiKey.trim().length > 0) {
     headers['Authorization'] = `Bearer ${settings.apiKey.trim()}`;
   }
@@ -107,6 +102,11 @@ export const streamChatResponse = async (
     if (settings.topK > 0) {
       body.top_k = settings.topK;
     }
+    
+    // Inject session_id into root if Context Cache is enabled
+    if (settings.contextCache) {
+        body.session_id = sessionId;
+    }
 
     console.log(`[Client] POST ${url}`, body);
 
@@ -114,7 +114,6 @@ export const streamChatResponse = async (
       method: 'POST',
       headers: headers,
       body: JSON.stringify(body),
-      // 'omit' is safer for local servers responding with wildcard CORS
       credentials: 'omit', 
     });
 
@@ -145,7 +144,6 @@ export const streamChatResponse = async (
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       
-      // Keep the last part in buffer if it doesn't end with newline
       buffer = lines.pop() || "";
 
       for (const line of lines) {
@@ -163,7 +161,7 @@ export const streamChatResponse = async (
             onChunk(fullText);
           }
         } catch (e) {
-          // Ignore JSON parse errors for individual chunks
+          // Ignore JSON parse errors
         }
       }
     }
@@ -189,6 +187,9 @@ export const generateTitle = async (firstMessage: string, settings: AppSettings)
     headers['Authorization'] = `Bearer ${settings.apiKey.trim()}`;
   }
 
+  // Truncate input to max 2000 chars approx to save tokens
+  const truncatedMessage = firstMessage.slice(0, 2000);
+
   try {
     const url = getEndpoint(settings.serverUrl);
     
@@ -199,10 +200,11 @@ export const generateTitle = async (firstMessage: string, settings: AppSettings)
         model: settings.model,
         messages: [
           { role: 'system', content: 'Generate a title (max 5 words) for this content. Do not use quotes.' },
-          { role: 'user', content: firstMessage }
+          { role: 'user', content: truncatedMessage }
         ],
         stream: false,
-        max_tokens: 15
+        max_tokens: 15,
+        // Important: Do NOT send session_id here. Title generation should be standalone.
       }),
       credentials: 'omit'
     });

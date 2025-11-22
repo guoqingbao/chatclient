@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { AppSettings } from '../types';
 import { RefreshIcon } from './Icon';
@@ -37,14 +36,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
     setFetchError(null);
 
     try {
-      // Construct models endpoint logic
       let baseUrl = settings.serverUrl.trim().replace(/\/+$/, '');
-      
-      // Common Cleanup: If user pasted the chat endpoint, strip it back
       baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
-
-      // Heuristic: OpenAI models endpoint is typically {base}/models
-      // If the user provided http://localhost:8000/v1, we want http://localhost:8000/v1/models
       const url = `${baseUrl}/models`;
 
       console.log(`[Settings] Fetching models from: ${url}`);
@@ -57,7 +50,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
       const response = await fetch(url, {
         method: 'GET',
         headers,
-        credentials: 'omit', // Important for local CORS with wildcard origins
+        credentials: 'omit',
       });
 
       if (!response.ok) {
@@ -65,23 +58,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
       }
 
       const data = await response.json();
-      // OpenAI format: { object: "list", data: [ { id: "model-id", ... } ] }
       if (data && Array.isArray(data.data)) {
         const modelIds = data.data.map((m: any) => m.id);
         setAvailableModels(modelIds);
-        
-        // Auto-select 'default' if it's the only one and current model isn't in list
-        if (modelIds.length === 1 && modelIds[0] === 'default' && !DEFAULT_MODELS.includes(settings.model) && settings.model !== 'default') {
-           // Optional: we could auto-switch here, but better to let user decide
-        }
       } else {
         throw new Error("Invalid JSON format received from server");
       }
     } catch (error: any) {
       console.error("Failed to fetch models:", error);
       setFetchError(error.message || "Connection failed");
-      // Keep availableModels empty so we fall back to defaults visually, 
-      // but we store the error to show the user.
     } finally {
       setIsLoadingModels(false);
     }
@@ -89,15 +74,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
 
   if (!isOpen) return null;
 
-  const handleChange = (key: keyof AppSettings, value: string | number) => {
+  const handleChange = (key: keyof AppSettings, value: string | number | boolean) => {
     onSettingsChange({ ...settings, [key]: value });
   };
 
-  // Merge fetched models with defaults, ensuring current selection is always visible
   const modelOptions = Array.from(new Set([
     ...availableModels, 
     ...DEFAULT_MODELS, 
-    settings.model // Ensure current model is in the list even if fetch fails
+    settings.model
   ]));
 
   return (
@@ -123,9 +107,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                 className="w-full bg-gray-50 dark:bg-dark-950 border border-gray-200 dark:border-dark-800 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={settings.serverUrl}
                 onChange={(e) => handleChange('serverUrl', e.target.value)}
-                onBlur={fetchModels} // Retry fetching models when user leaves this field
+                onBlur={fetchModels} 
               />
-              <p className="text-xs text-gray-500 mt-1">The API endpoint (e.g. http://localhost:8000/v1/)</p>
             </div>
              <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
@@ -137,12 +120,29 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                 onChange={(e) => handleChange('apiKey', e.target.value)}
               />
             </div>
+            
+            {/* Advanced Backend Toggles */}
+            <div className="flex items-center justify-between border border-gray-100 dark:border-dark-800 p-3 rounded-lg">
+              <div>
+                <div className="text-sm font-medium text-gray-900 dark:text-white">Context Caching</div>
+                <div className="text-xs text-gray-500">Sends unique session_id to server</div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  className="sr-only peer" 
+                  checked={settings.contextCache}
+                  onChange={(e) => handleChange('contextCache', e.target.checked)}
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
           </div>
 
           <div className="border-t border-gray-100 dark:border-dark-800 pt-4 space-y-4">
              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">Model Parameters</h3>
              
-             {/* Model Selection */}
+            {/* Model Selection */}
             <div>
               <div className="flex justify-between items-center mb-1">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Model</label>
@@ -165,22 +165,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                     <option key={m} value={m}>{m}</option>
                   ))}
                 </select>
-                {/* Custom arrow */}
                 <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700 dark:text-gray-300">
                   <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
                 </div>
               </div>
               
-              {/* Error / Status Message */}
               {fetchError && (
-                <p className="text-xs text-red-500 mt-1">
-                  Error fetching models: {fetchError}
-                </p>
-              )}
-              {availableModels.length > 0 && !fetchError && (
-                <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-                  ✓ Loaded {availableModels.length} models from server
-                </p>
+                <p className="text-xs text-red-500 mt-1">Error: {fetchError}</p>
               )}
             </div>
 
@@ -239,6 +230,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                 onChange={(e) => handleChange('maxOutputTokens', parseInt(e.target.value))}
               />
             </div>
+
+             {/* Auto Title Toggle */}
+            <div className="flex items-center justify-between pt-2">
+              <div>
+                <div className="text-sm font-medium text-gray-900 dark:text-white">Auto-Generate Titles</div>
+                <div className="text-xs text-gray-500">Summarize first message as chat title</div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  className="sr-only peer" 
+                  checked={settings.generateTitles}
+                  onChange={(e) => handleChange('generateTitles', e.target.checked)}
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+
           </div>
         </div>
 

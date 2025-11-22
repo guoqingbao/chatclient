@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
@@ -8,11 +7,9 @@ import { streamChatResponse, generateTitle } from './services/geminiService';
 import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
-// --- Helper Component for Thinking ---
 const ThinkingProcess = ({ thought, isComplete }: { thought: string, isComplete: boolean }) => {
   const [isOpen, setIsOpen] = useState(!isComplete);
 
-  // Auto-collapse when complete, auto-expand while thinking
   useEffect(() => {
     if (isComplete) {
       setIsOpen(false);
@@ -49,24 +46,20 @@ const ThinkingProcess = ({ thought, isComplete }: { thought: string, isComplete:
 };
 
 const App: React.FC = () => {
-  // --- State ---
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
-    const stored = localStorage.getItem('rust_chat_sessions');
+    const stored = localStorage.getItem('chat_client_sessions');
     return stored ? JSON.parse(stored) : [];
   });
 
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   
-  // Initialize settings from localStorage immediately to prevent default override
   const [settings, setSettings] = useState<AppSettings>(() => {
-    const stored = localStorage.getItem('rust_chat_settings');
+    const stored = localStorage.getItem('chat_client_settings');
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        // Merge with defaults to ensure all fields exist (handling upgrades)
         return { ...DEFAULT_SETTINGS, ...parsed };
       } catch (e) {
-        console.error("Failed to parse stored settings", e);
         return DEFAULT_SETTINGS;
       }
     }
@@ -83,23 +76,19 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // --- Effects ---
-
-  // Check for Rust injected config on mount (overrides local storage if present)
   useEffect(() => {
-    const rustConfig = window.RUST_APP_CONFIG;
-    if (rustConfig) {
+    const hostConfig = window.CHAT_APP_CONFIG || window.RUST_APP_CONFIG;
+    if (hostConfig) {
        setSettings(prev => ({
           ...prev,
-          model: rustConfig.defaultModel || prev.model,
-          theme: rustConfig.initialTheme || prev.theme,
-          serverUrl: rustConfig.serverUrl || prev.serverUrl,
-          apiKey: rustConfig.apiKey || prev.apiKey
+          model: hostConfig.defaultModel || prev.model,
+          theme: hostConfig.initialTheme || prev.theme,
+          serverUrl: hostConfig.serverUrl || prev.serverUrl,
+          apiKey: hostConfig.apiKey || prev.apiKey
        }));
     }
   }, []);
 
-  // Initial Session Setup
   useEffect(() => {
     if (sessions.length > 0 && !currentSessionId) {
       setCurrentSessionId(sessions[0].id);
@@ -108,18 +97,16 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Save to local storage
   useEffect(() => {
     if (sessions.length > 0) {
-      localStorage.setItem('rust_chat_sessions', JSON.stringify(sessions));
+      localStorage.setItem('chat_client_sessions', JSON.stringify(sessions));
     }
   }, [sessions]);
 
   useEffect(() => {
-    localStorage.setItem('rust_chat_settings', JSON.stringify(settings));
+    localStorage.setItem('chat_client_settings', JSON.stringify(settings));
   }, [settings]);
 
-  // Apply Theme
   useEffect(() => {
     const root = document.documentElement;
     if (settings.theme === 'dark') {
@@ -129,21 +116,17 @@ const App: React.FC = () => {
     }
   }, [settings.theme]);
 
-  // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sessions, currentSessionId, isStreaming]);
 
-  // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = 'inherit'; // Reset to recalculate
+      textareaRef.current.style.height = 'inherit'; 
       const scrollHeight = textareaRef.current.scrollHeight;
-      textareaRef.current.style.height = `${Math.min(Math.max(scrollHeight, 56), 200)}px`; // Min 56px, Max 200px
+      textareaRef.current.style.height = `${Math.min(Math.max(scrollHeight, 56), 200)}px`;
     }
   }, [input]);
-
-  // --- Helpers ---
 
   const getCurrentSession = () => sessions.find(s => s.id === currentSessionId);
 
@@ -156,7 +139,6 @@ const App: React.FC = () => {
     };
     setSessions(prev => [newSession, ...prev]);
     setCurrentSessionId(newSession.id);
-    // Focus input on new chat
     setTimeout(() => textareaRef.current?.focus(), 100);
     return newSession.id;
   };
@@ -181,7 +163,6 @@ const App: React.FC = () => {
     navigator.clipboard.writeText(text);
   };
 
-  // Parse message text to separate <think> blocks
   const parseMessageContent = (text: string) => {
     const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/;
     const match = text.match(thinkRegex);
@@ -196,9 +177,6 @@ const App: React.FC = () => {
     return { hasThought: false, thought: '', isComplete: true, mainContent: text };
   };
 
-  // --- Core Logic ---
-
-  // Core function to handle streaming, decoupled from UI state inputs for flexibility (supports Redo)
   const executeStream = async (
     sessionId: string, 
     historyMessages: Message[], 
@@ -208,7 +186,6 @@ const App: React.FC = () => {
     setIsStreaming(true);
     abortControllerRef.current = new AbortController();
 
-    // 1. Create User Message
     const newUserMsg: Message = {
       id: uuidv4(),
       role: Role.User,
@@ -217,7 +194,6 @@ const App: React.FC = () => {
       timestamp: Date.now(),
     };
 
-    // 2. Create Placeholder Bot Message
     const newBotMsg: Message = {
       id: uuidv4(),
       role: Role.Model,
@@ -225,15 +201,14 @@ const App: React.FC = () => {
       timestamp: Date.now() + 1,
     };
 
-    // 3. Update State with new messages
     const updatedMessages = [...historyMessages, newUserMsg, newBotMsg];
     updateSessionMessages(sessionId, updatedMessages);
 
     try {
-      // Filter history for API (exclude the empty bot message we just added)
       const historyForApi = updatedMessages.slice(0, -1); 
 
       await streamChatResponse(
+        sessionId, // Pass session_id for context caching
         historyForApi.filter(m => m.role !== Role.Model || m.text.length > 0),
         userText,
         userAttachments,
@@ -254,6 +229,14 @@ const App: React.FC = () => {
           }));
         }
       );
+
+      // Handle Title Generation AFTER first message stream completes, if enabled
+      if (historyMessages.length === 0 && settings.generateTitles) {
+          generateTitle(userText, settings).then(t => {
+              updateSessionTitle(sessionId, t);
+          });
+      }
+
     } catch (error: any) {
        setSessions(prev => prev.map(s => {
             if (s.id === sessionId) {
@@ -292,17 +275,8 @@ const App: React.FC = () => {
     const textToSend = input;
     const attachmentsToSend = attachments;
 
-    // Clear Input immediately
     setInput('');
     setAttachments([]);
-
-    // Generate title if first message
-    if (currentHistory.length === 0) {
-      // Pass settings to generateTitle to ensure it uses the correct server/key
-      generateTitle(textToSend, settings).then(t => {
-        if (activeSessionId) updateSessionTitle(activeSessionId, t);
-      });
-    }
 
     await executeStream(activeSessionId, currentHistory, textToSend, attachmentsToSend);
   };
@@ -326,14 +300,8 @@ const App: React.FC = () => {
     const userMessage = session.messages[userMsgIndex];
     if (userMessage.role !== Role.User) return; 
 
-    // Critical: Slice history to REMOVE the old User message and the Bot message.
-    // We want the state to effectively "rewind" to before the user spoke.
     const historyBeforeTurn = session.messages.slice(0, userMsgIndex);
-    
-    // Update state immediately to remove the old interaction
     updateSessionMessages(session.id, historyBeforeTurn);
-    
-    // Trigger stream with the cleaned history
     executeStream(session.id, historyBeforeTurn, userMessage.text, userMessage.attachments || []);
   };
 
@@ -343,12 +311,8 @@ const App: React.FC = () => {
       if (!session) return;
 
       const userMessage = session.messages[userMsgIndex];
-      
-      // Remove this message and everything after it
       const newHistory = session.messages.slice(0, userMsgIndex);
       updateSessionMessages(session.id, newHistory);
-      
-      // Put content back into input
       setInput(userMessage.text);
       setAttachments(userMessage.attachments || []);
       textareaRef.current?.focus();
@@ -391,18 +355,15 @@ const App: React.FC = () => {
     setSettings(prev => ({ ...prev, theme: prev.theme === 'dark' ? 'light' : 'dark' }));
   };
 
-  // --- Render ---
-
   const currentSession = getCurrentSession();
 
   return (
     <div className="flex h-screen w-full bg-white dark:bg-dark-950 text-gray-900 dark:text-gray-100 transition-colors duration-300">
       
-      {/* Sidebar */}
       <div className="w-64 bg-gray-50 dark:bg-dark-900 border-r border-gray-200 dark:border-dark-800 flex flex-col hidden md:flex transition-all duration-300">
         <div className="p-4 flex items-center gap-2">
-           <div className="w-8 h-8 bg-gray-900 dark:bg-white rounded-lg flex items-center justify-center font-bold text-white dark:text-black shadow-sm">R</div>
-           <span className="font-bold text-lg tracking-tight text-gray-900 dark:text-gray-100">RustClient</span>
+           <div className="w-8 h-8 bg-gray-900 dark:bg-white rounded-lg flex items-center justify-center font-bold text-white dark:text-black shadow-sm">C</div>
+           <span className="font-bold text-lg tracking-tight text-gray-900 dark:text-gray-100">ChatClient</span>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
@@ -455,12 +416,10 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Chat Area */}
       <div className="flex-1 flex flex-col h-full relative bg-white dark:bg-dark-950 transition-colors duration-300">
         
-        {/* Mobile Header */}
         <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
-           <span className="font-bold text-gray-900 dark:text-white">RustClient</span>
+           <span className="font-bold text-gray-900 dark:text-white">ChatClient</span>
            <div className="flex gap-4">
               <button onClick={toggleTheme} className="text-gray-600 dark:text-gray-400">
                  {settings.theme === 'dark' ? <SunIcon /> : <MoonIcon />}
@@ -471,44 +430,38 @@ const App: React.FC = () => {
            </div>
         </div>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
           {!currentSession || currentSession.messages.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
                 <div className="w-20 h-20 mb-6 rounded-2xl bg-gray-100 dark:bg-dark-900 flex items-center justify-center">
-                    {/* Neutral robot placeholder */}
                     <div className="text-gray-300 dark:text-gray-700">
                       <BotIcon /> 
                     </div>
                 </div>
-                <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-200 mb-2">Welcome to RustClient</h3>
+                <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-200 mb-2">Welcome to ChatClient</h3>
                 <p className="text-center max-w-md text-gray-500 dark:text-gray-500">
                   Start a conversation by typing a message or uploading a file below.
                 </p>
              </div>
           ) : (
             currentSession.messages.map((msg, index) => {
-              // Parse logic for Model messages
               const contentParts = msg.role === Role.Model ? parseMessageContent(msg.text) : null;
 
               return (
               <div key={msg.id} className={`flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}>
-                {/* Avatar */}
                 <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-1 border border-gray-200 dark:border-gray-700 ${
                   msg.role === Role.User 
                     ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300' 
-                    : 'bg-black dark:bg-white text-white dark:text-black shadow-md'
+                    : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 shadow-sm'
                 }`}>
                   {msg.role === Role.User ? <UserIcon /> : <BotIcon />}
                 </div>
 
-                {/* Content */}
                 <div className={`flex flex-col max-w-[85%] lg:max-w-[75%] ${msg.role === Role.User ? 'items-end' : 'items-start'}`}>
                    
-                   {/* Name & Time */}
                    <div className="flex items-center gap-2 mb-1 px-1">
                       <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                        {msg.role === Role.User ? 'You' : 'AI Assistant'}
+                        {msg.role === Role.User ? 'You' : 'ChatClient'}
                       </span>
                    </div>
 
@@ -527,7 +480,6 @@ const App: React.FC = () => {
                        </div>
                      )}
                      
-                     {/* Markdown Rendering */}
                      {msg.role === Role.Model ? (
                         <div className="markdown-body">
                            {contentParts && contentParts.hasThought && (
@@ -542,22 +494,8 @@ const App: React.FC = () => {
                      )}
                    </div>
                    
-                   {/* Message Actions - Persistent for Bot */}
-                   <div className={`flex items-center gap-3 mt-2 px-1 transition-opacity duration-200 ${msg.role === Role.User ? 'justify-end opacity-0 hover:opacity-100' : 'justify-start'}`}>
-                       {/* User Actions */}
-                       {msg.role === Role.User && !isStreaming && (
-                         <button 
-                           onClick={() => handleUserRevise(index)}
-                           className="text-xs font-medium text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1 transition-colors bg-gray-50 dark:bg-dark-900 px-2 py-1 rounded"
-                           title="Edit to resend"
-                         >
-                           <RefreshIcon /> Revise
-                         </button>
-                       )}
-
-                       {/* Bot Actions - Always visible after generation */}
-                       {msg.role === Role.Model && !isStreaming && !msg.isError && (
-                          <>
+                   {msg.role === Role.Model && !isStreaming && !msg.isError && (
+                      <div className="flex items-center gap-3 mt-2 px-1 justify-start">
                             <button 
                               onClick={() => handleResend(index)}
                               className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"
@@ -579,9 +517,19 @@ const App: React.FC = () => {
                             >
                                <ShareIcon /> Share
                             </button>
-                          </>
-                       )}
-                   </div>
+                       </div>
+                   )}
+                    {msg.role === Role.User && !isStreaming && (
+                        <div className="flex items-center gap-3 mt-2 px-1 justify-end opacity-0 hover:opacity-100 transition-opacity duration-200">
+                         <button 
+                           onClick={() => handleUserRevise(index)}
+                           className="text-xs font-medium text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1 transition-colors bg-gray-50 dark:bg-dark-900 px-2 py-1 rounded"
+                           title="Edit to resend"
+                         >
+                           <RefreshIcon /> Revise
+                         </button>
+                        </div>
+                    )}
                 </div>
               </div>
             )})
@@ -589,11 +537,9 @@ const App: React.FC = () => {
           <div ref={messagesEndRef} className="h-4" />
         </div>
 
-        {/* Input Area */}
         <div className="p-4 md:p-6 bg-white dark:bg-dark-950 transition-colors duration-300 z-20">
            <div className="max-w-4xl mx-auto relative">
               
-              {/* File Preview */}
               {attachments.length > 0 && (
                 <div className="absolute bottom-full left-0 mb-3 flex flex-wrap gap-2">
                    {attachments.map((f, i) => (
@@ -636,7 +582,7 @@ const App: React.FC = () => {
                         handleSendMessage();
                       }
                     }}
-                    placeholder="Message RustClient..."
+                    placeholder="Message ChatClient..."
                     className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none py-3 px-4 max-h-[200px] min-h-[24px] leading-6 custom-scrollbar"
                     rows={1}
                  />
