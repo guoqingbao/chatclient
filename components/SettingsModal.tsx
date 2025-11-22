@@ -21,6 +21,7 @@ const DEFAULT_MODELS = [
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings, onSettingsChange }) => {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Fetch models when modal opens or server URL changes
   useEffect(() => {
@@ -33,21 +34,20 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
     if (!settings.serverUrl) return;
     
     setIsLoadingModels(true);
+    setFetchError(null);
+
     try {
-      // Construct models endpoint
-      // 1. Remove trailing slash
+      // Construct models endpoint logic
       let baseUrl = settings.serverUrl.trim().replace(/\/+$/, '');
       
-      // 2. Remove 'chat/completions' if present (common mistake)
+      // Common Cleanup: If user pasted the chat endpoint, strip it back
       baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
 
-      // 3. Ensure it ends with /v1 if not present (heuristic, though some servers might be just root)
-      // However, if the user provided http://localhost:8000/v1, we are good.
-      // If they provided http://localhost:8000, we might need to add /v1 depending on implementation, 
-      // but usually we respect the user's base path. 
-      // The standard is GET {baseUrl}/models
-      
+      // Heuristic: OpenAI models endpoint is typically {base}/models
+      // If the user provided http://localhost:8000/v1, we want http://localhost:8000/v1/models
       const url = `${baseUrl}/models`;
+
+      console.log(`[Settings] Fetching models from: ${url}`);
 
       const headers: Record<string, string> = {};
       if (settings.apiKey) {
@@ -57,21 +57,31 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
       const response = await fetch(url, {
         method: 'GET',
         headers,
-        credentials: 'omit', // Important for local CORS
+        credentials: 'omit', // Important for local CORS with wildcard origins
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        // OpenAI format: { object: "list", data: [ { id: "model-id", ... } ] }
-        if (data && Array.isArray(data.data)) {
-          const modelIds = data.data.map((m: any) => m.id);
-          setAvailableModels(modelIds);
-          return;
-        }
+      if (!response.ok) {
+         throw new Error(`Server returned ${response.status} ${response.statusText}`);
       }
-      // If format is different or fails, we fall back to defaults silently or keep previous
-    } catch (error) {
-      console.warn("Failed to fetch models:", error);
+
+      const data = await response.json();
+      // OpenAI format: { object: "list", data: [ { id: "model-id", ... } ] }
+      if (data && Array.isArray(data.data)) {
+        const modelIds = data.data.map((m: any) => m.id);
+        setAvailableModels(modelIds);
+        
+        // Auto-select 'default' if it's the only one and current model isn't in list
+        if (modelIds.length === 1 && modelIds[0] === 'default' && !DEFAULT_MODELS.includes(settings.model) && settings.model !== 'default') {
+           // Optional: we could auto-switch here, but better to let user decide
+        }
+      } else {
+        throw new Error("Invalid JSON format received from server");
+      }
+    } catch (error: any) {
+      console.error("Failed to fetch models:", error);
+      setFetchError(error.message || "Connection failed");
+      // Keep availableModels empty so we fall back to defaults visually, 
+      // but we store the error to show the user.
     } finally {
       setIsLoadingModels(false);
     }
@@ -155,13 +165,22 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                     <option key={m} value={m}>{m}</option>
                   ))}
                 </select>
-                {/* Custom arrow because standard select arrow is ugly */}
+                {/* Custom arrow */}
                 <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700 dark:text-gray-300">
                   <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
                 </div>
               </div>
-              {availableModels.length === 0 && !isLoadingModels && (
-                <p className="text-xs text-yellow-600 mt-1">Could not fetch models. Using defaults.</p>
+              
+              {/* Error / Status Message */}
+              {fetchError && (
+                <p className="text-xs text-red-500 mt-1">
+                  Error fetching models: {fetchError}
+                </p>
+              )}
+              {availableModels.length > 0 && !fetchError && (
+                <p className="text-xs text-green-600 dark:text-green-400 mt-1">
+                  ✓ Loaded {availableModels.length} models from server
+                </p>
               )}
             </div>
 
