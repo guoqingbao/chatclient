@@ -4,121 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Gemini Chat Client</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              rust: {
-                500: '#b7410e',
-                600: '#9a340a',
-              },
-              dark: {
-                800: '#1e1e1e',
-                900: '#121212',
-                950: '#0a0a0a',
-              }
-            },
-            animation: {
-              'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-            },
-            typography: (theme) => ({
-              DEFAULT: {
-                css: {
-                  color: theme('colors.gray.900'),
-                  a: {
-                    color: theme('colors.rust.600'),
-                    '&:hover': {
-                      color: theme('colors.rust.500'),
-                    },
-                  },
-                  pre: {
-                    backgroundColor: theme('colors.gray.100'),
-                    color: theme('colors.gray.900'),
-                  },
-                  code: {
-                    color: theme('colors.rust.600'),
-                    backgroundColor: theme('colors.gray.100'),
-                    borderRadius: '0.25rem',
-                    padding: '0.125rem 0.25rem',
-                  },
-                },
-              },
-              invert: {
-                css: {
-                  color: theme('colors.gray.100'),
-                  a: {
-                    color: theme('colors.rust.500'),
-                  },
-                  pre: {
-                    backgroundColor: theme('colors.dark.900'),
-                    color: theme('colors.gray.100'),
-                  },
-                  code: {
-                    color: theme('colors.rust.500'),
-                    backgroundColor: theme('colors.dark.900'),
-                  },
-                },
-              },
-            }),
-          },
-        },
-      }
-    </script>
-    <style>
-      /* Custom scrollbar for Webkit */
-      ::-webkit-scrollbar {
-        width: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: transparent; 
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #ccc; 
-        border-radius: 4px;
-      }
-      .dark ::-webkit-scrollbar-thumb {
-        background: #333; 
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #999; 
-      }
-      .dark ::-webkit-scrollbar-thumb:hover {
-        background: #555; 
-      }
-      
-      /* Markdown Styles specifically for rendering area */
-      .markdown-body p { margin-bottom: 0.75em; }
-      .markdown-body ul { list-style-type: disc; margin-left: 1.5em; margin-bottom: 0.75em; }
-      .markdown-body ol { list-style-type: decimal; margin-left: 1.5em; margin-bottom: 0.75em; }
-      .markdown-body h1 { font-size: 1.5em; font-weight: bold; margin-top: 1em; margin-bottom: 0.5em; }
-      .markdown-body h2 { font-size: 1.25em; font-weight: bold; margin-top: 1em; margin-bottom: 0.5em; }
-      .markdown-body h3 { font-size: 1.1em; font-weight: bold; margin-top: 1em; margin-bottom: 0.5em; }
-      .markdown-body code { font-family: monospace; background: rgba(128,128,128,0.1); padding: 2px 4px; border-radius: 4px; }
-      .markdown-body pre { background: rgba(128,128,128,0.1); padding: 1em; border-radius: 8px; overflow-x: auto; margin-bottom: 1em; }
-      .markdown-body pre code { background: transparent; padding: 0; }
-      .markdown-body blockquote { border-left: 4px solid #b7410e; padding-left: 1em; margin-left: 0; font-style: italic; opacity: 0.8; }
-      .markdown-body table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
-      .markdown-body th, .markdown-body td { border: 1px solid rgba(128,128,128,0.2); padding: 6px 12px; }
-      .markdown-body th { background: rgba(128,128,128,0.05); font-weight: 600; }
-    </style>
   <script type="importmap">
 {
   "imports": {
-    "uuid": "https://aistudiocdn.com/uuid@^13.0.0",
     "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "react": "https://aistudiocdn.com/react@^19.2.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "react-markdown": "https://esm.sh/react-markdown@9?bundle",
-    "remark-gfm": "https://esm.sh/remark-gfm@4?bundle"
+    "react-markdown": "https://aistudiocdn.com/react-markdown@^10.1.0",
+    "remark-gfm": "https://aistudiocdn.com/remark-gfm@^4.0.1",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.1",
+    "uuid": "https://aistudiocdn.com/uuid@^13.0.0",
+    "vite": "https://aistudiocdn.com/vite@^7.2.4"
   }
 }
 </script>
 </head>
   <body class="bg-gray-50 text-gray-900 dark:bg-dark-950 dark:text-gray-100 font-sans antialiased h-screen overflow-hidden transition-colors duration-300">
     <div id="root" class="h-full w-full"></div>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

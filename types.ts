@@ -53,14 +53,15 @@ declare global {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  model: 'gpt-3.5-turbo',
+  model: 'gemini-2.5-flash',
   temperature: 0.7,
-  topK: 0, // Not standard in OpenAI, but often supported by open source backends
-  topP: 1.0,
+  topK: 0, 
+  topP: 0.95,
   maxOutputTokens: 2048,
   systemInstruction: 'You are a helpful, coding-expert AI assistant. Use Markdown for formatting.',
   language: 'en',
   theme: 'light',
-  serverUrl: 'https://api.openai.com/v1',
+  // Google Gemini OpenAI-compatible endpoint
+  serverUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', 
   apiKey: '',
 };

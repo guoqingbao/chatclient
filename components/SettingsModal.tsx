@@ -34,11 +34,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Server URL</label>
               <input 
                 type="text"
-                placeholder="https://api.openai.com/v1"
+                placeholder="https://generativelanguage.googleapis.com/v1beta/openai/"
                 className="w-full bg-gray-50 dark:bg-dark-950 border border-gray-200 dark:border-dark-800 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={settings.serverUrl}
                 onChange={(e) => handleChange('serverUrl', e.target.value)}
               />
+              <p className="text-xs text-gray-500 mt-1">Default: Google Gemini OpenAI-compatible endpoint.</p>
             </div>
              <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
@@ -64,9 +65,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                 onChange={(e) => handleChange('model', e.target.value)}
               >
                 <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                <option value="gemini-3-pro-preview">Gemini 3 Pro Preview</option>
-                <option value="gemini-2.5-flash-thinking">Gemini 2.5 Flash Thinking</option>
-                <option value="gpt-4o">GPT-4o (if compatible)</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                <option value="gpt-4o">GPT-4o</option>
+                <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
               </select>
             </div>
 
