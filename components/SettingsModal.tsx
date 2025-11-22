@@ -1,5 +1,7 @@
-import React from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { AppSettings } from '../types';
+import { RefreshIcon } from './Icon';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -8,12 +10,85 @@ interface SettingsModalProps {
   onSettingsChange: (newSettings: AppSettings) => void;
 }
 
+const DEFAULT_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-1.5-flash",
+  "gpt-4o", 
+  "gpt-3.5-turbo",
+  "default"
+];
+
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings, onSettingsChange }) => {
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+
+  // Fetch models when modal opens or server URL changes
+  useEffect(() => {
+    if (isOpen) {
+      fetchModels();
+    }
+  }, [isOpen, settings.serverUrl]);
+
+  const fetchModels = async () => {
+    if (!settings.serverUrl) return;
+    
+    setIsLoadingModels(true);
+    try {
+      // Construct models endpoint
+      // 1. Remove trailing slash
+      let baseUrl = settings.serverUrl.trim().replace(/\/+$/, '');
+      
+      // 2. Remove 'chat/completions' if present (common mistake)
+      baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
+
+      // 3. Ensure it ends with /v1 if not present (heuristic, though some servers might be just root)
+      // However, if the user provided http://localhost:8000/v1, we are good.
+      // If they provided http://localhost:8000, we might need to add /v1 depending on implementation, 
+      // but usually we respect the user's base path. 
+      // The standard is GET {baseUrl}/models
+      
+      const url = `${baseUrl}/models`;
+
+      const headers: Record<string, string> = {};
+      if (settings.apiKey) {
+        headers['Authorization'] = `Bearer ${settings.apiKey}`;
+      }
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+        credentials: 'omit', // Important for local CORS
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // OpenAI format: { object: "list", data: [ { id: "model-id", ... } ] }
+        if (data && Array.isArray(data.data)) {
+          const modelIds = data.data.map((m: any) => m.id);
+          setAvailableModels(modelIds);
+          return;
+        }
+      }
+      // If format is different or fails, we fall back to defaults silently or keep previous
+    } catch (error) {
+      console.warn("Failed to fetch models:", error);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const handleChange = (key: keyof AppSettings, value: string | number) => {
     onSettingsChange({ ...settings, [key]: value });
   };
+
+  // Merge fetched models with defaults, ensuring current selection is always visible
+  const modelOptions = Array.from(new Set([
+    ...availableModels, 
+    ...DEFAULT_MODELS, 
+    settings.model // Ensure current model is in the list even if fetch fails
+  ]));
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
@@ -34,12 +109,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Server URL</label>
               <input 
                 type="text"
-                placeholder="https://generativelanguage.googleapis.com/v1beta/openai/"
+                placeholder="http://localhost:8000/v1/"
                 className="w-full bg-gray-50 dark:bg-dark-950 border border-gray-200 dark:border-dark-800 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={settings.serverUrl}
                 onChange={(e) => handleChange('serverUrl', e.target.value)}
+                onBlur={fetchModels} // Retry fetching models when user leaves this field
               />
-              <p className="text-xs text-gray-500 mt-1">Default: Google Gemini OpenAI-compatible endpoint.</p>
+              <p className="text-xs text-gray-500 mt-1">The API endpoint (e.g. http://localhost:8000/v1/)</p>
             </div>
              <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
@@ -58,18 +134,35 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
              
              {/* Model Selection */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Model</label>
-              <select 
-                className="w-full bg-gray-50 dark:bg-dark-950 border border-gray-200 dark:border-dark-800 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={settings.model}
-                onChange={(e) => handleChange('model', e.target.value)}
-              >
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                <option value="gpt-4o">GPT-4o</option>
-                <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-              </select>
+              <div className="flex justify-between items-center mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Model</label>
+                <button 
+                  onClick={fetchModels} 
+                  disabled={isLoadingModels}
+                  className={`text-xs flex items-center gap-1 text-indigo-600 dark:text-indigo-400 hover:underline ${isLoadingModels ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <RefreshIcon /> {isLoadingModels ? 'Refreshing...' : 'Refresh List'}
+                </button>
+              </div>
+              
+              <div className="relative">
+                <select 
+                  className="w-full bg-gray-50 dark:bg-dark-950 border border-gray-200 dark:border-dark-800 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none"
+                  value={settings.model}
+                  onChange={(e) => handleChange('model', e.target.value)}
+                >
+                  {modelOptions.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                {/* Custom arrow because standard select arrow is ugly */}
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700 dark:text-gray-300">
+                  <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                </div>
+              </div>
+              {availableModels.length === 0 && !isLoadingModels && (
+                <p className="text-xs text-yellow-600 mt-1">Could not fetch models. Using defaults.</p>
+              )}
             </div>
 
              {/* System Instruction */}
