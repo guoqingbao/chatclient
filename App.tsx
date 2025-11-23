@@ -45,6 +45,62 @@ const ThinkingProcess = ({ thought, isComplete }: { thought: string, isComplete:
   );
 };
 
+// Edit Modal Component
+const EditMessageModal = ({ 
+  isOpen, 
+  onClose, 
+  initialText, 
+  onConfirm 
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  initialText: string; 
+  onConfirm: (newText: string) => void; 
+}) => {
+  const [text, setText] = useState(initialText);
+
+  useEffect(() => {
+    if (isOpen) setText(initialText);
+  }, [isOpen, initialText]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm p-4">
+      <div className="bg-white dark:bg-dark-900 rounded-xl shadow-2xl w-full max-w-2xl border border-gray-200 dark:border-dark-800 flex flex-col">
+        <div className="p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Edit Message</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
+        </div>
+        <div className="p-4 flex-1">
+          <textarea
+            className="w-full h-64 bg-gray-50 dark:bg-dark-950 border border-gray-200 dark:border-dark-800 rounded-lg p-4 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none custom-scrollbar"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <p className="text-xs text-gray-500 mt-2">
+            Editing this message will clear all subsequent messages in this conversation.
+          </p>
+        </div>
+        <div className="p-4 border-t border-gray-200 dark:border-dark-800 flex justify-end gap-3">
+          <button 
+            onClick={onClose}
+            className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-800 rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={() => onConfirm(text)}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium"
+          >
+            Send & Restart
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const App: React.FC = () => {
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     const stored = localStorage.getItem('chat_client_sessions');
@@ -70,6 +126,9 @@ const App: React.FC = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
+  
+  // Edit State
+  const [editingMessage, setEditingMessage] = useState<{index: number, text: string} | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -252,7 +311,7 @@ const App: React.FC = () => {
         }
       );
 
-      // Handle Title Generation
+      // Handle Title Generation (only if it's the first exchange)
       if (historyMessages.length === 0) {
         if (settings.generateTitles) {
             generateTitle(userText, settings).then(t => {
@@ -338,7 +397,6 @@ const App: React.FC = () => {
   const handleStopGeneration = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
-      // State cleanup happens in finally block of executeStream
     }
   };
 
@@ -358,21 +416,36 @@ const App: React.FC = () => {
     executeStream(session.id, historyBeforeTurn, userMessage.text, userMessage.attachments || []);
   };
 
-  const handleUserRevise = (userMsgIndex: number) => {
+  // Open the modal for editing
+  const openEditModal = (userMsgIndex: number) => {
       if (isStreaming) return;
       const session = getCurrentSession();
       if (!session) return;
-
-      const userMessage = session.messages[userMsgIndex];
-      // Branching logic: Clear history AFTER this user message so we can rewrite it.
-      const newHistory = session.messages.slice(0, userMsgIndex);
-      updateSessionMessages(session.id, newHistory);
       
-      // Load content back to input
-      setInput(userMessage.text);
-      setAttachments(userMessage.attachments || []);
-      textareaRef.current?.focus();
-  }
+      const userMessage = session.messages[userMsgIndex];
+      setEditingMessage({ index: userMsgIndex, text: userMessage.text });
+  };
+
+  // Confirm edit from modal
+  const handleConfirmEdit = (newText: string) => {
+      if (!editingMessage || !currentSessionId) return;
+      const session = getCurrentSession();
+      if (!session) return;
+
+      const userMsgIndex = editingMessage.index;
+      const originalMessage = session.messages[userMsgIndex];
+
+      // Branching logic: Keep history UP TO this message (exclusive)
+      const historyBeforeTurn = session.messages.slice(0, userMsgIndex);
+      
+      // Update session to clear future messages
+      updateSessionMessages(session.id, historyBeforeTurn);
+      
+      // Send new request with modified text and original attachments
+      executeStream(session.id, historyBeforeTurn, newText, originalMessage.attachments || []);
+      
+      setEditingMessage(null);
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -381,9 +454,8 @@ const App: React.FC = () => {
 
       for (const file of filesArray) {
         // Simple check for text/code files
-        // We accept common text/code types or if the browser says it's text/...
         const isText = file.type.startsWith('text/') || 
-                       file.name.match(/\.(js|jsx|ts|tsx|rs|py|c|cpp|h|java|go|rb|php|html|css|json|md|yaml|toml|sh|bat|sql|xml)$/i);
+                       file.name.match(/\.(js|jsx|ts|tsx|rs|py|c|cpp|h|java|go|rb|php|html|css|json|md|yaml|toml|sh|bat|sql|xml|txt)$/i);
 
         if (!isText) {
             alert(`File "${file.name}" ignored. Only text/code files are supported.`);
@@ -392,8 +464,8 @@ const App: React.FC = () => {
 
         try {
           const text = await file.text();
-          // Estimate token count (char count / 4 is a rough heuristic)
-          const tokens = Math.ceil(text.length / 4);
+          // Estimate token count (char count / 2 is a rough heuristic)
+          const tokens = Math.ceil(text.length / 2);
 
           newAttachments.push({
             name: file.name,
@@ -430,6 +502,7 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen w-full bg-white dark:bg-dark-950 text-gray-900 dark:text-gray-100 transition-colors duration-300">
       
+      {/* Sidebar */}
       <div className="w-64 bg-gray-50 dark:bg-dark-900 border-r border-gray-200 dark:border-dark-800 flex flex-col hidden md:flex transition-all duration-300">
         <div className="p-4 flex items-center gap-2">
            <div className="w-8 h-8 bg-gray-900 dark:bg-white rounded-lg flex items-center justify-center font-bold text-white dark:text-black shadow-sm">C</div>
@@ -488,6 +561,7 @@ const App: React.FC = () => {
 
       <div className="flex-1 flex flex-col h-full relative bg-white dark:bg-dark-950 transition-colors duration-300">
         
+        {/* Mobile Header */}
         <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
            <span className="font-bold text-gray-900 dark:text-white">ChatClient</span>
            <div className="flex gap-4">
@@ -500,6 +574,7 @@ const App: React.FC = () => {
            </div>
         </div>
 
+        {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
           {!currentSession || currentSession.messages.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
@@ -516,6 +591,7 @@ const App: React.FC = () => {
           ) : (
             currentSession.messages.map((msg, index) => {
               const contentParts = msg.role === Role.Model ? parseMessageContent(msg.text) : null;
+              const isWaitingForFirstToken = msg.role === Role.Model && msg.text === '' && isStreaming && index === currentSession.messages.length - 1;
 
               return (
               <div key={msg.id} className={`flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}>
@@ -553,6 +629,13 @@ const App: React.FC = () => {
                      
                      {msg.role === Role.Model ? (
                         <div className="markdown-body">
+                           {isWaitingForFirstToken && (
+                               <div className="flex items-center gap-1 h-6">
+                                 <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+                                 <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div>
+                                 <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div>
+                               </div>
+                           )}
                            {contentParts && contentParts.hasThought && (
                              <ThinkingProcess thought={contentParts.thought} isComplete={contentParts.isComplete} />
                            )}
@@ -593,11 +676,11 @@ const App: React.FC = () => {
                     {msg.role === Role.User && !isStreaming && (
                         <div className="flex items-center gap-3 mt-2 px-1 justify-end opacity-0 hover:opacity-100 transition-opacity duration-200">
                          <button 
-                           onClick={() => handleUserRevise(index)}
+                           onClick={() => openEditModal(index)}
                            className="text-xs font-medium text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1 transition-colors bg-gray-50 dark:bg-dark-900 px-2 py-1 rounded"
                            title="Edit to resend"
                          >
-                           <RefreshIcon /> Revise
+                           <RefreshIcon /> Edit
                          </button>
                         </div>
                     )}
@@ -608,6 +691,7 @@ const App: React.FC = () => {
           <div ref={messagesEndRef} className="h-4" />
         </div>
 
+        {/* Input Area */}
         <div className="p-4 md:p-6 bg-white dark:bg-dark-950 transition-colors duration-300 z-20">
            <div className="max-w-4xl mx-auto relative">
               
@@ -690,6 +774,13 @@ const App: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSettingsChange={setSettings}
+      />
+
+      <EditMessageModal 
+        isOpen={!!editingMessage}
+        onClose={() => setEditingMessage(null)}
+        initialText={editingMessage?.text || ''}
+        onConfirm={handleConfirmEdit}
       />
 
     </div>
