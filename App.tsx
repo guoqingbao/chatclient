@@ -1,9 +1,10 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment } from './types';
-import { streamChatResponse, generateTitle } from './services/geminiService';
+import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage } from './types';
+import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount } from './services/geminiService';
 import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
@@ -129,6 +130,11 @@ const App: React.FC = () => {
   
   // Edit State
   const [editingMessage, setEditingMessage] = useState<{index: number, text: string} | null>(null);
+
+  // Token Usage State
+  const [tokenStats, setTokenStats] = useState<TokenUsage | null>(null);
+  // Ref to track usage polling failures to auto-kill the thread
+  const usageFailuresRef = useRef(0);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -166,6 +172,40 @@ const App: React.FC = () => {
     localStorage.setItem('chat_client_settings', JSON.stringify(settings));
   }, [settings]);
 
+  // Token Usage Polling
+  useEffect(() => {
+    // Only poll if context cache is enabled and we have a session
+    if (!settings.contextCache || !currentSessionId) {
+        setTokenStats(null);
+        return;
+    }
+
+    // Reset failures on session change
+    usageFailuresRef.current = 0;
+
+    const pollUsage = async () => {
+        // If we failed too many times (e.g., endpoint doesn't exist), stop polling
+        if (usageFailuresRef.current > 5) return;
+
+        const stats = await fetchTokenUsage(currentSessionId, settings);
+        if (stats) {
+            setTokenStats(stats);
+            usageFailuresRef.current = 0; // Reset on success
+        } else {
+            usageFailuresRef.current += 1;
+        }
+    };
+
+    // Initial fetch
+    pollUsage();
+
+    // Poll every 3 seconds
+    const intervalId = setInterval(pollUsage, 3000);
+    return () => clearInterval(intervalId);
+
+  }, [currentSessionId, settings.contextCache, settings.serverUrl]);
+
+
   useEffect(() => {
     const root = document.documentElement;
     if (settings.theme === 'dark') {
@@ -198,6 +238,8 @@ const App: React.FC = () => {
     };
     setSessions(prev => [newSession, ...prev]);
     setCurrentSessionId(newSession.id);
+    setTokenStats(null); // Reset stats
+    usageFailuresRef.current = 0; // Reset polling check
     setTimeout(() => textareaRef.current?.focus(), 100);
     return newSession.id;
   };
@@ -385,6 +427,29 @@ const App: React.FC = () => {
 
     if (!activeSessionId) return;
 
+    // CLIENT SIDE TOKEN GUARD
+    // Only check if we have valid stats and max_model_len
+    if (settings.contextCache && tokenStats && tokenStats.max_model_len > 1024) {
+        let totalEstimated = 0;
+        
+        // 1. Estimate history
+        currentHistory.forEach(m => {
+             totalEstimated += estimateTokenCount(m.text);
+             m.attachments?.forEach(a => totalEstimated += (a.tokenCount || 0));
+        });
+
+        // 2. Estimate new input
+        totalEstimated += estimateTokenCount(input);
+        attachments.forEach(a => totalEstimated += (a.tokenCount || 0));
+
+        // 3. Check against limit (130% tolerance)
+        const limit = tokenStats.max_model_len * 1.3;
+        if (totalEstimated > limit) {
+             alert(`Message blocked: Estimated token usage (${totalEstimated}) exceeds 130% of model limit (${tokenStats.max_model_len}). Please start a new chat or shorten context.`);
+             return;
+        }
+    }
+
     const textToSend = input;
     const attachmentsToSend = attachments;
 
@@ -455,6 +520,8 @@ const App: React.FC = () => {
       
       // Update pointer
       setCurrentSessionId(newSessionId);
+      setTokenStats(null); // Reset stats for new session
+      usageFailuresRef.current = 0;
       
       // Send new request with modified text and original attachments using the NEW ID
       executeStream(newSessionId, historyBeforeTurn, newText, originalMessage.attachments || []);
@@ -504,6 +571,7 @@ const App: React.FC = () => {
       setSessions(newSessions);
       if (currentSessionId === id) {
         setCurrentSessionId(newSessions.length > 0 ? newSessions[0].id : null);
+        setTokenStats(null);
       }
     }
   };
@@ -588,6 +656,22 @@ const App: React.FC = () => {
               </button>
            </div>
         </div>
+
+        {/* Chat Header / Token Indicator Area */}
+        {/* We use absolute positioning or a subtle floating header so it doesn't take too much space */}
+        {settings.contextCache && tokenStats && (
+            <div className="absolute top-2 right-4 z-20 hidden md:flex items-center gap-3 px-3 py-1.5 bg-gray-50/80 dark:bg-dark-900/80 backdrop-blur-sm rounded-lg border border-gray-100 dark:border-dark-800 shadow-sm pointer-events-none transition-opacity animate-in fade-in duration-500">
+                <div className="text-[10px] md:text-xs font-mono text-gray-400 dark:text-gray-500">
+                    <span className="font-semibold text-gray-500 dark:text-gray-400">{tokenStats.token_used.toLocaleString()}</span>
+                    <span className="mx-0.5">/</span>
+                    <span>{tokenStats.max_model_len.toLocaleString()}</span> tokens
+                </div>
+                <div className="w-px h-3 bg-gray-200 dark:bg-dark-700"></div>
+                <div className="text-[10px] md:text-xs font-mono text-gray-400 dark:text-gray-500">
+                    KvCache: <span className="font-semibold text-gray-500 dark:text-gray-400">{tokenStats.available_kvcache_tokens.toLocaleString()}</span>
+                </div>
+            </div>
+        )}
 
         {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">

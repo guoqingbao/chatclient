@@ -1,4 +1,5 @@
-import { Message, Role, AppSettings, FileAttachment } from "../types";
+
+import { Message, Role, AppSettings, FileAttachment, TokenUsage } from "../types";
 
 // Helper to prepare messages for OpenAI format
 const prepareMessages = (
@@ -66,6 +67,55 @@ const getEndpoint = (baseUrl: string) => {
   if (cleanBase.endsWith('/v1')) return `${cleanBase}/chat/completions`;
   
   return `${cleanBase}/chat/completions`;
+};
+
+// Exported for usage check in App.tsx
+export const estimateTokenCount = (text: string): number => {
+  return Math.ceil(text.length / 2);
+};
+
+export const fetchTokenUsage = async (
+  sessionId: string, 
+  settings: AppSettings
+): Promise<TokenUsage | null> => {
+  if (!settings.serverUrl || !sessionId) return null;
+
+  try {
+    // Construct usage endpoint: http://localhost:8000/v1/usage
+    let baseUrl = settings.serverUrl.trim().replace(/\/+$/, '');
+    baseUrl = baseUrl.replace('0.0.0.0', 'localhost');
+    if (!baseUrl.startsWith('http')) baseUrl = 'http://' + baseUrl;
+    
+    // If url ends with /chat/completions, strip it to get base
+    baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
+
+    // Assuming endpoint is relative to base, e.g. /v1/usage
+    const url = `${baseUrl}/usage?session_id=${sessionId}`;
+
+    const headers: Record<string, string> = {};
+    if (settings.apiKey && settings.apiKey.trim().length > 0) {
+      headers['Authorization'] = `Bearer ${settings.apiKey.trim()}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: headers,
+      credentials: 'omit'
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    
+    // Validate response shape
+    if (typeof data.token_used === 'number' && typeof data.max_model_len === 'number') {
+      return data as TokenUsage;
+    }
+    return null;
+  } catch (error) {
+    // Silent failure as requested
+    return null;
+  }
 };
 
 export const streamChatResponse = async (

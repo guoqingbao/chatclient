@@ -1,3 +1,4 @@
+
 export enum Role {
   User = 'user',
   Model = 'model',
@@ -24,6 +25,12 @@ export interface ChatSession {
   title: string;
   messages: Message[];
   lastUpdated: number;
+}
+
+export interface TokenUsage {
+  token_used: number;
+  max_model_len: number;
+  available_kvcache_tokens: number;
 }
 
 export interface AppSettings {
