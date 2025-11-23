@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -136,7 +136,11 @@ const App: React.FC = () => {
   // Ref to track usage polling failures to auto-kill the thread
   const usageFailuresRef = useRef(0);
   
+  // Scroll & UI Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true); // Track if we should auto-scroll
+
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -201,35 +205,24 @@ const App: React.FC = () => {
 
   // Token Usage Polling
   useEffect(() => {
-    // Only poll if context cache is enabled and we have a session
     if (!settings.contextCache || !currentSessionId) {
         setTokenStats(null);
         return;
     }
-
-    // Reset failures on session change
     usageFailuresRef.current = 0;
-
     const pollUsage = async () => {
-        // If we failed too many times (e.g., endpoint doesn't exist), stop polling
         if (usageFailuresRef.current > 5) return;
-
         const stats = await fetchTokenUsage(currentSessionId, settings);
         if (stats) {
             setTokenStats(stats);
-            usageFailuresRef.current = 0; // Reset on success
+            usageFailuresRef.current = 0;
         } else {
             usageFailuresRef.current += 1;
         }
     };
-
-    // Initial fetch
     pollUsage();
-
-    // Poll every 3 seconds
     const intervalId = setInterval(pollUsage, 3000);
     return () => clearInterval(intervalId);
-
   }, [currentSessionId, settings.contextCache, settings.serverUrl]);
 
 
@@ -242,9 +235,26 @@ const App: React.FC = () => {
     }
   }, [settings.theme]);
 
+  // SMART SCROLL LOGIC
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+  };
+
+  // Only auto-scroll if the user hasn't scrolled up
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (shouldAutoScrollRef.current) {
+      scrollToBottom();
+    }
   }, [sessions, currentSessionId, isStreaming]);
+
+  const handleScroll = () => {
+    if (!scrollContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+    
+    // Check if user is near bottom (within 50px)
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+    shouldAutoScrollRef.current = isAtBottom;
+  };
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -267,6 +277,7 @@ const App: React.FC = () => {
     setCurrentSessionId(newSession.id);
     setTokenStats(null); // Reset stats
     usageFailuresRef.current = 0; // Reset polling check
+    shouldAutoScrollRef.current = true; // Reset scroll lock
     setTimeout(() => textareaRef.current?.focus(), 100);
     return newSession.id;
   };
@@ -333,6 +344,7 @@ const App: React.FC = () => {
     userAttachments: FileAttachment[]
   ) => {
     setIsStreaming(true);
+    shouldAutoScrollRef.current = true; // Force scroll to bottom on start
     abortControllerRef.current = new AbortController();
 
     const newUserMsg: Message = {
@@ -353,11 +365,36 @@ const App: React.FC = () => {
     const updatedMessages = [...historyMessages, newUserMsg, newBotMsg];
     updateSessionMessages(sessionId, updatedMessages);
 
+    // Buffer for Smooth Rendering
+    let bufferedText = "";
+    let animationFrameId: number;
+
+    const flushBuffer = () => {
+       setSessions(prev => prev.map(s => {
+          if (s.id === sessionId) {
+            const msgs = [...s.messages];
+            const lastMsg = msgs[msgs.length - 1];
+            if (lastMsg && lastMsg.role === Role.Model) {
+               // Only update if changed to avoid unnecessary renders
+               if (lastMsg.text !== bufferedText) {
+                  lastMsg.text = bufferedText;
+               }
+            }
+            return { ...s, messages: msgs };
+          }
+          return s;
+       }));
+       animationFrameId = requestAnimationFrame(flushBuffer);
+    };
+
+    // Start the render loop
+    animationFrameId = requestAnimationFrame(flushBuffer);
+
     try {
       const historyForApi = updatedMessages.slice(0, -1); 
 
       await streamChatResponse(
-        sessionId, // Pass session_id for context caching
+        sessionId,
         historyForApi.filter(m => m.role !== Role.Model || m.text.length > 0),
         userText,
         userAttachments,
@@ -365,18 +402,8 @@ const App: React.FC = () => {
         abortControllerRef.current.signal,
         (chunkText) => {
           if (abortControllerRef.current?.signal.aborted) return;
-
-          setSessions(prev => prev.map(s => {
-            if (s.id === sessionId) {
-              const msgs = [...s.messages];
-              const lastMsg = msgs[msgs.length - 1];
-              if (lastMsg && lastMsg.role === Role.Model) {
-                lastMsg.text = chunkText;
-              }
-              return { ...s, messages: msgs };
-            }
-            return s;
-          }));
+          // Just update the buffer, don't trigger state update here
+          bufferedText = chunkText;
         }
       );
 
@@ -387,14 +414,15 @@ const App: React.FC = () => {
                 updateSessionTitle(sessionId, t);
             });
         } else {
-            // Fallback title (max 30 chars)
             const fallbackTitle = userText.length > 30 ? userText.slice(0, 30) + '...' : userText;
             updateSessionTitle(sessionId, fallbackTitle);
         }
       }
 
     } catch (error: any) {
-       // If cancelled by user, we just mark it visually, don't flag as error
+       // Stop the render loop immediately on error
+       cancelAnimationFrame(animationFrameId);
+       
        if (error.name === 'AbortError') {
           setSessions(prev => prev.map(s => {
             if (s.id === sessionId) {
@@ -402,7 +430,9 @@ const App: React.FC = () => {
               const lastMsg = msgs[msgs.length - 1];
               
               if (lastMsg && lastMsg.role === Role.Model) {
-                // Check if we are inside a <think> block
+                // Ensure we capture whatever was in buffer before stopping
+                lastMsg.text = bufferedText; 
+                
                 const isInThinking = lastMsg.text.includes('<think>') && !lastMsg.text.includes('</think>');
                 const alreadyStopped = lastMsg.text.endsWith('[Stopped]') || lastMsg.text.endsWith('_⛔ Generation stopped by user_');
 
@@ -424,6 +454,7 @@ const App: React.FC = () => {
                   const msgs = [...s.messages];
                   const lastMsg = msgs[msgs.length - 1];
                   if (lastMsg) {
+                    lastMsg.text = bufferedText; // Flush buffer
                     lastMsg.text = `Error: ${error.message || "Failed to generate response"}. Check API settings.`;
                     lastMsg.isError = true;
                   }
@@ -433,6 +464,7 @@ const App: React.FC = () => {
            }));
        }
     } finally {
+      cancelAnimationFrame(animationFrameId); // Ensure loop stops
       setIsStreaming(false);
       abortControllerRef.current = null;
       setTimeout(() => textareaRef.current?.focus(), 50);
@@ -455,21 +487,15 @@ const App: React.FC = () => {
     if (!activeSessionId) return;
 
     // CLIENT SIDE TOKEN GUARD
-    // Only check if we have valid stats and max_model_len
     if (settings.contextCache && tokenStats && tokenStats.max_model_len > 1024) {
         let totalEstimated = 0;
-        
-        // 1. Estimate history
         currentHistory.forEach(m => {
              totalEstimated += estimateTokenCount(m.text);
              m.attachments?.forEach(a => totalEstimated += (a.tokenCount || 0));
         });
-
-        // 2. Estimate new input
         totalEstimated += estimateTokenCount(input);
         attachments.forEach(a => totalEstimated += (a.tokenCount || 0));
 
-        // 3. Check against limit (130% tolerance)
         const limit = tokenStats.max_model_len * 1.3;
         if (totalEstimated > limit) {
              alert(`Message blocked: Estimated token usage (${totalEstimated}) exceeds 130% of model limit (${tokenStats.max_model_len}). Please start a new chat or shorten context.`);
@@ -503,9 +529,38 @@ const App: React.FC = () => {
     const userMessage = session.messages[userMsgIndex];
     if (userMessage.role !== Role.User) return; 
 
+    // Branching logic base
     const historyBeforeTurn = session.messages.slice(0, userMsgIndex);
-    updateSessionMessages(session.id, historyBeforeTurn);
-    executeStream(session.id, historyBeforeTurn, userMessage.text, userMessage.attachments || []);
+    
+    // REDO + CONTEXT CACHE BRANCHING
+    // If context cache is enabled, we MUST generate a new Session ID
+    // so the server doesn't use the cached tokens from the *previous* bot response.
+    if (settings.contextCache) {
+        const newSessionId = uuidv4();
+        
+        setSessions(prev => prev.map(s => {
+            if (s.id === session.id) {
+                return {
+                    ...s,
+                    id: newSessionId,
+                    messages: historyBeforeTurn
+                };
+            }
+            return s;
+        }));
+        
+        setCurrentSessionId(newSessionId);
+        setTokenStats(null); // Reset stats
+        usageFailuresRef.current = 0;
+        
+        // Execute with new ID
+        executeStream(newSessionId, historyBeforeTurn, userMessage.text, userMessage.attachments || []);
+
+    } else {
+        // Standard Redo (same session ID)
+        updateSessionMessages(session.id, historyBeforeTurn);
+        executeStream(session.id, historyBeforeTurn, userMessage.text, userMessage.attachments || []);
+    }
   };
 
   // Open the modal for editing
@@ -527,13 +582,11 @@ const App: React.FC = () => {
       const userMsgIndex = editingMessage.index;
       const originalMessage = session.messages[userMsgIndex];
 
-      // Branching logic: Keep history UP TO this message (exclusive)
       const historyBeforeTurn = session.messages.slice(0, userMsgIndex);
       
-      // IMPORTANT: Generate a NEW Session ID to avoid context cache pollution on the server
+      // Branching logic: Always new ID for clean state on edit
       const newSessionId = uuidv4();
 
-      // Update session in state: swap ID and set truncated history
       setSessions(prev => prev.map(s => {
           if (s.id === currentSessionId) {
               return {
@@ -545,14 +598,11 @@ const App: React.FC = () => {
           return s;
       }));
       
-      // Update pointer
       setCurrentSessionId(newSessionId);
-      setTokenStats(null); // Reset stats for new session
+      setTokenStats(null); 
       usageFailuresRef.current = 0;
       
-      // Send new request with modified text and original attachments using the NEW ID
       executeStream(newSessionId, historyBeforeTurn, newText, originalMessage.attachments || []);
-      
       setEditingMessage(null);
   };
 
@@ -562,7 +612,6 @@ const App: React.FC = () => {
       const newAttachments: FileAttachment[] = [];
 
       for (const file of filesArray) {
-        // Simple check for text/code files
         const isText = file.type.startsWith('text/') || 
                        file.name.match(/\.(js|jsx|ts|tsx|rs|py|c|cpp|h|java|go|rb|php|html|css|json|md|yaml|toml|sh|bat|sql|xml|txt)$/i);
 
@@ -573,9 +622,7 @@ const App: React.FC = () => {
 
         try {
           const text = await file.text();
-          // Estimate token count (char count / 2 is a rough heuristic)
           const tokens = Math.ceil(text.length / 2);
-
           newAttachments.push({
             name: file.name,
             type: file.type,
@@ -692,7 +739,11 @@ const App: React.FC = () => {
         </div>
 
         {/* Chat Area */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
+        <div 
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth"
+        >
           {!currentSession || currentSession.messages.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
                 <div className="w-20 h-20 mb-6 rounded-2xl bg-gray-100 dark:bg-dark-900 flex items-center justify-center">
