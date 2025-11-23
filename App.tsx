@@ -657,22 +657,6 @@ const App: React.FC = () => {
            </div>
         </div>
 
-        {/* Chat Header / Token Indicator Area */}
-        {/* We use absolute positioning or a subtle floating header so it doesn't take too much space */}
-        {settings.contextCache && tokenStats && (
-            <div className="absolute top-2 right-4 z-20 hidden md:flex items-center gap-3 px-3 py-1.5 bg-gray-50/80 dark:bg-dark-900/80 backdrop-blur-sm rounded-lg border border-gray-100 dark:border-dark-800 shadow-sm pointer-events-none transition-opacity animate-in fade-in duration-500">
-                <div className="text-[10px] md:text-xs font-mono text-gray-400 dark:text-gray-500">
-                    <span className="font-semibold text-gray-500 dark:text-gray-400">{tokenStats.token_used.toLocaleString()}</span>
-                    <span className="mx-0.5">/</span>
-                    <span>{tokenStats.max_model_len.toLocaleString()}</span> tokens
-                </div>
-                <div className="w-px h-3 bg-gray-200 dark:bg-dark-700"></div>
-                <div className="text-[10px] md:text-xs font-mono text-gray-400 dark:text-gray-500">
-                    KvCache: <span className="font-semibold text-gray-500 dark:text-gray-400">{tokenStats.available_kvcache_tokens.toLocaleString()}</span>
-                </div>
-            </div>
-        )}
-
         {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
           {!currentSession || currentSession.messages.length === 0 ? (
@@ -859,11 +843,26 @@ const App: React.FC = () => {
                    </button>
                  )}
               </div>
-              <div className="text-center mt-3">
+              
+              <div className="flex flex-col items-center mt-3 gap-1">
+                 {/* Footer Token Indicator */}
+                 {settings.contextCache && tokenStats && (
+                    <div className="flex items-center gap-3 px-3 py-1 rounded-full bg-gray-100 dark:bg-dark-900 border border-gray-200 dark:border-dark-800 text-[10px] font-mono text-gray-500 dark:text-gray-400 animate-in fade-in slide-in-from-bottom-2">
+                        <div className="flex items-center gap-1.5">
+                            <span className={`w-1.5 h-1.5 rounded-full ${tokenStats.token_used > tokenStats.max_model_len * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                            <span>{tokenStats.token_used.toLocaleString()} / {tokenStats.max_model_len.toLocaleString()}</span>
+                        </div>
+                        <div className="w-px h-3 bg-gray-300 dark:bg-dark-700"></div>
+                        <div>
+                            KvCache: {tokenStats.available_kvcache_tokens.toLocaleString()}
+                        </div>
+                    </div>
+                 )}
                  <p className="text-[10px] text-gray-400 dark:text-gray-600">
                     AI can make mistakes. Please verify important information.
                  </p>
               </div>
+
            </div>
         </div>
       </div>

@@ -103,7 +103,9 @@ export const fetchTokenUsage = async (
       credentials: 'omit'
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+        return null;
+    }
 
     const data = await response.json();
     
@@ -113,7 +115,6 @@ export const fetchTokenUsage = async (
     }
     return null;
   } catch (error) {
-    // Silent failure as requested
     return null;
   }
 };
