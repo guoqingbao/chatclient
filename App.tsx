@@ -213,6 +213,7 @@ const App: React.FC = () => {
         userText,
         userAttachments,
         settings,
+        abortControllerRef.current.signal,
         (chunkText) => {
           if (abortControllerRef.current?.signal.aborted) return;
 
@@ -238,18 +239,33 @@ const App: React.FC = () => {
       }
 
     } catch (error: any) {
-       setSessions(prev => prev.map(s => {
+       // If cancelled by user, we just mark it visually, don't flag as error
+       if (error.name === 'AbortError') {
+          setSessions(prev => prev.map(s => {
             if (s.id === sessionId) {
               const msgs = [...s.messages];
               const lastMsg = msgs[msgs.length - 1];
-              if (lastMsg) {
-                lastMsg.text = `Error: ${error.message || "Failed to generate response"}. Check API settings.`;
-                lastMsg.isError = true;
+              if (lastMsg && lastMsg.role === Role.Model) {
+                lastMsg.text += "\n\n_⛔ Generation stopped by user_";
               }
               return { ...s, messages: msgs };
             }
             return s;
-       }));
+          }));
+       } else {
+           setSessions(prev => prev.map(s => {
+                if (s.id === sessionId) {
+                  const msgs = [...s.messages];
+                  const lastMsg = msgs[msgs.length - 1];
+                  if (lastMsg) {
+                    lastMsg.text = `Error: ${error.message || "Failed to generate response"}. Check API settings.`;
+                    lastMsg.isError = true;
+                  }
+                  return { ...s, messages: msgs };
+                }
+                return s;
+           }));
+       }
     } finally {
       setIsStreaming(false);
       abortControllerRef.current = null;
@@ -284,8 +300,7 @@ const App: React.FC = () => {
   const handleStopGeneration = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-      setIsStreaming(false);
+      // State cleanup happens in finally block of executeStream
     }
   };
 

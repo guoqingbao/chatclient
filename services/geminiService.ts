@@ -74,6 +74,7 @@ export const streamChatResponse = async (
   newMessage: string,
   attachments: FileAttachment[],
   settings: AppSettings,
+  signal: AbortSignal,
   onChunk: (text: string) => void
 ): Promise<string> => {
 
@@ -115,6 +116,7 @@ export const streamChatResponse = async (
       headers: headers,
       body: JSON.stringify(body),
       credentials: 'omit', 
+      signal: signal
     });
 
     if (!response.ok) {
@@ -169,6 +171,9 @@ export const streamChatResponse = async (
     return fullText;
 
   } catch (error: any) {
+    if (error.name === 'AbortError') {
+        throw error; // Re-throw so caller handles it as cancellation
+    }
     console.error("Chat Stream Error:", error);
     if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
        throw new Error(`Connection failed to ${url}. Check if server is running and accessible (CORS issues or invalid URL).`);
