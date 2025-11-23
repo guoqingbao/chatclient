@@ -33,6 +33,11 @@ export interface TokenUsage {
   available_kvcache_tokens: number;
 }
 
+export interface ServerConfig {
+  serverUrl?: string;
+  apiKey?: string;
+}
+
 export interface AppSettings {
   model: string;
   temperature: number;

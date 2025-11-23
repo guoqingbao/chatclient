@@ -1,10 +1,9 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage } from './types';
-import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount } from './services/geminiService';
+import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig } from './services/geminiService';
 import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
@@ -127,6 +126,7 @@ const App: React.FC = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
+  const [configError, setConfigError] = useState<string | null>(null);
   
   // Edit State
   const [editingMessage, setEditingMessage] = useState<{index: number, text: string} | null>(null);
@@ -141,7 +141,31 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Bootstrap Configuration
   useEffect(() => {
+    let attempts = 0;
+    const maxAttempts = 5;
+
+    const loadConfig = async () => {
+        const config = await fetchServerConfig();
+        if (config && config.serverUrl) {
+            setSettings(prev => ({
+                ...prev,
+                serverUrl: config.serverUrl!,
+                apiKey: config.apiKey || prev.apiKey
+            }));
+            setConfigError(null);
+        } else {
+            attempts++;
+            if (attempts < maxAttempts) {
+                setTimeout(loadConfig, 2000);
+            } else {
+                setConfigError(`Unable to obtain server config automatically. Using default: ${DEFAULT_SETTINGS.serverUrl}`);
+            }
+        }
+    };
+
+    // Check for host injected config first
     const hostConfig = window.CHAT_APP_CONFIG || window.RUST_APP_CONFIG;
     if (hostConfig) {
        setSettings(prev => ({
@@ -151,6 +175,9 @@ const App: React.FC = () => {
           serverUrl: hostConfig.serverUrl || prev.serverUrl,
           apiKey: hostConfig.apiKey || prev.apiKey
        }));
+    } else {
+       // Try fetching from endpoint
+       loadConfig();
     }
   }, []);
 
@@ -644,6 +671,13 @@ const App: React.FC = () => {
 
       <div className="flex-1 flex flex-col h-full relative bg-white dark:bg-dark-950 transition-colors duration-300">
         
+        {/* Error Banner */}
+        {configError && (
+            <div className="bg-red-500 text-white text-xs p-2 text-center">
+                {configError}
+            </div>
+        )}
+
         {/* Mobile Header */}
         <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
            <span className="font-bold text-gray-900 dark:text-white">ChatClient</span>

@@ -1,5 +1,4 @@
-
-import { Message, Role, AppSettings, FileAttachment, TokenUsage } from "../types";
+import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
 
 // Helper to prepare messages for OpenAI format
 const prepareMessages = (
@@ -74,6 +73,24 @@ export const estimateTokenCount = (text: string): number => {
   return Math.ceil(text.length / 2);
 };
 
+export const fetchServerConfig = async (): Promise<ServerConfig | null> => {
+    try {
+        // Fetch from the same origin that served the web app
+        // The Rust backend should intercept this route and return the JSON
+        const response = await fetch('/app-config.json', {
+            method: 'GET',
+            cache: 'no-store'
+        });
+
+        if (!response.ok) return null;
+        
+        const data = await response.json();
+        return data as ServerConfig;
+    } catch (e) {
+        return null;
+    }
+};
+
 export const fetchTokenUsage = async (
   sessionId: string, 
   settings: AppSettings
@@ -131,8 +148,7 @@ export const streamChatResponse = async (
 
   const messages = prepareMessages(history, newMessage, attachments, settings);
   const url = getEndpoint(settings.serverUrl);
-
-  // Basic headers
+  
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -141,136 +157,153 @@ export const streamChatResponse = async (
     headers['Authorization'] = `Bearer ${settings.apiKey.trim()}`;
   }
 
+  const body: any = {
+    model: settings.model,
+    messages: messages,
+    stream: true,
+    temperature: settings.temperature,
+    top_p: settings.topP,
+    max_tokens: settings.maxOutputTokens,
+  };
+
+  if (settings.topK > 0) {
+    body.top_k = settings.topK;
+  }
+
+  // Inject session_id if context caching is enabled
+  if (settings.contextCache) {
+      // Per OpenAI spec/LocalAI/vLLM extensions, extra params often go in root or specific fields
+      // We inject into root as requested for "extra_body" simulation
+      body.session_id = sessionId;
+  }
+
   try {
-    const body: any = {
-      model: settings.model,
-      messages: messages,
-      stream: true,
-      temperature: settings.temperature,
-      top_p: settings.topP,
-      max_tokens: settings.maxOutputTokens,
-    };
-
-    if (settings.topK > 0) {
-      body.top_k = settings.topK;
-    }
-    
-    // Inject session_id into root if Context Cache is enabled
-    if (settings.contextCache) {
-        body.session_id = sessionId;
-    }
-
-    console.log(`[Client] POST ${url}`, body);
-
     const response = await fetch(url, {
       method: 'POST',
-      headers: headers,
+      headers,
       body: JSON.stringify(body),
-      credentials: 'omit', 
-      signal: signal
+      signal, // Pass abort signal
+      credentials: 'omit' 
     });
 
     if (!response.ok) {
-        const errText = await response.text();
-        let errMsg = `API Request Failed (${response.status})`;
-        try {
-            const json = JSON.parse(errText);
-            if (json.error && json.error.message) errMsg += `: ${json.error.message}`;
-            else errMsg += `: ${errText}`;
-        } catch {
-            errMsg += `: ${errText}`;
+      // Try to parse error message
+      let errorMsg = `API Request Failed (${response.status})`;
+      try {
+        const errorData = await response.json();
+        if (errorData.error && errorData.error.message) {
+           errorMsg += `: ${errorData.error.message}`;
         }
-        throw new Error(errMsg);
+      } catch (e) {
+         // Raw text?
+         const text = await response.text();
+         if (text) errorMsg += `: ${text.slice(0, 100)}`;
+      }
+      
+      // Hint for common 404
+      if (response.status === 404) {
+          errorMsg += ". Check API settings.";
+      }
+
+      throw new Error(errorMsg);
     }
 
-    if (!response.body) throw new Error("No response body received from server.");
+    if (!response.body) throw new Error("No response body");
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
-    let fullText = "";
-    let buffer = "";
+    let done = false;
+    let accumulatedText = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+    while (!done) {
+      const { value, done: readerDone } = await reader.read();
+      done = readerDone;
+      if (value) {
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
         
-        const dataStr = trimmed.replace('data: ', '');
-        if (dataStr === '[DONE]') return fullText;
-
-        try {
-          const json = JSON.parse(dataStr);
-          const delta = json.choices?.[0]?.delta?.content;
-          if (delta) {
-            fullText += delta;
-            onChunk(fullText);
+        for (const line of lines) {
+          if (line.trim() === '') continue;
+          if (line.trim() === 'data: [DONE]') continue;
+          
+          if (line.startsWith('data: ')) {
+            try {
+              const jsonStr = line.replace('data: ', '');
+              const json = JSON.parse(jsonStr);
+              
+              if (json.choices && json.choices.length > 0) {
+                const delta = json.choices[0].delta;
+                if (delta.content) {
+                  accumulatedText += delta.content;
+                  onChunk(accumulatedText);
+                }
+              }
+            } catch (e) {
+              console.warn("Failed to parse SSE chunk", e);
+            }
           }
-        } catch (e) {
-          // Ignore JSON parse errors
         }
       }
     }
 
-    return fullText;
-
+    return accumulatedText;
   } catch (error: any) {
     if (error.name === 'AbortError') {
-        throw error; // Re-throw so caller handles it as cancellation
+        throw error; // Re-throw for App.tsx to handle
     }
-    console.error("Chat Stream Error:", error);
-    if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
-       throw new Error(`Connection failed to ${url}. Check if server is running and accessible (CORS issues or invalid URL).`);
+    // CORS specific hint
+    if (error.message && error.message.includes('Failed to fetch')) {
+        throw new Error(`Connection failed. Check if server is running and accessible (CORS issues or invalid URL). ${error.message}`);
     }
     throw error;
   }
 };
 
-export const generateTitle = async (firstMessage: string, settings: AppSettings): Promise<string> => {
-  if (!settings.serverUrl) return "New Chat";
+export const generateTitle = async (
+  firstMessageText: string,
+  settings: AppSettings
+): Promise<string> => {
+  // Truncate to avoid massive context overhead for just a title
+  const truncatedInput = firstMessageText.slice(0, 2000); 
+  const prompt = `Summarize the following message into a short, concise chat title (max 6 words). Do not use quotes. Message: "${truncatedInput}"`;
+
+  const url = getEndpoint(settings.serverUrl);
   
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
+  
   if (settings.apiKey && settings.apiKey.trim().length > 0) {
     headers['Authorization'] = `Bearer ${settings.apiKey.trim()}`;
   }
 
-  // Truncate input to max 2000 chars approx to save tokens
-  const truncatedMessage = firstMessage.slice(0, 2000);
+  // NOTE: We do NOT send session_id here. 
+  // Title generation should be stateless and not pollute the chat context cache.
+  const body = {
+    model: settings.model,
+    messages: [
+        { role: 'user', content: prompt }
+    ],
+    stream: false,
+    max_tokens: 20,
+    temperature: 0.5
+  };
 
   try {
-    const url = getEndpoint(settings.serverUrl);
-    
     const response = await fetch(url, {
       method: 'POST',
-      headers: headers,
-      body: JSON.stringify({
-        model: settings.model,
-        messages: [
-          { role: 'system', content: 'Generate a title (max 5 words) for this content. Do not use quotes.' },
-          { role: 'user', content: truncatedMessage }
-        ],
-        stream: false,
-        max_tokens: 15,
-        // Important: Do NOT send session_id here. Title generation should be standalone.
-      }),
+      headers,
+      body: JSON.stringify(body),
       credentials: 'omit'
     });
 
     if (!response.ok) return "New Chat";
-    
+
     const data = await response.json();
-    const title = data.choices?.[0]?.message?.content?.trim();
-    
-    return title || "New Chat";
+    if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+      return data.choices[0].message.content.trim().replace(/^["']|["']$/g, '');
+    }
+    return "New Chat";
   } catch (e) {
     return "New Chat";
   }
