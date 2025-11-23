@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment } from './types';
 import { streamChatResponse, generateTitle } from './services/geminiService';
-import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon } from './components/Icon';
+import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
 const ThinkingProcess = ({ thought, isComplete }: { thought: string, isComplete: boolean }) => {
@@ -674,13 +674,13 @@ const App: React.FC = () => {
                        </div>
                    )}
                     {msg.role === Role.User && !isStreaming && (
-                        <div className="flex items-center gap-3 mt-2 px-1 justify-end opacity-0 hover:opacity-100 transition-opacity duration-200">
+                        <div className="flex items-center gap-3 mt-2 px-1 justify-end">
                          <button 
                            onClick={() => openEditModal(index)}
                            className="text-xs font-medium text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1 transition-colors bg-gray-50 dark:bg-dark-900 px-2 py-1 rounded"
                            title="Edit to resend"
                          >
-                           <RefreshIcon /> Edit
+                           <EditIcon /> Edit
                          </button>
                         </div>
                     )}
