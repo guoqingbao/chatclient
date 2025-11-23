@@ -438,11 +438,26 @@ const App: React.FC = () => {
       // Branching logic: Keep history UP TO this message (exclusive)
       const historyBeforeTurn = session.messages.slice(0, userMsgIndex);
       
-      // Update session to clear future messages
-      updateSessionMessages(session.id, historyBeforeTurn);
+      // IMPORTANT: Generate a NEW Session ID to avoid context cache pollution on the server
+      const newSessionId = uuidv4();
+
+      // Update session in state: swap ID and set truncated history
+      setSessions(prev => prev.map(s => {
+          if (s.id === currentSessionId) {
+              return {
+                  ...s,
+                  id: newSessionId,
+                  messages: historyBeforeTurn
+              };
+          }
+          return s;
+      }));
       
-      // Send new request with modified text and original attachments
-      executeStream(session.id, historyBeforeTurn, newText, originalMessage.attachments || []);
+      // Update pointer
+      setCurrentSessionId(newSessionId);
+      
+      // Send new request with modified text and original attachments using the NEW ID
+      executeStream(newSessionId, historyBeforeTurn, newText, originalMessage.attachments || []);
       
       setEditingMessage(null);
   };
