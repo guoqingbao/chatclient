@@ -7,19 +7,20 @@ import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount,
 import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
-const ThinkingProcess = ({ thought, isComplete }: { thought: string, isComplete: boolean }) => {
-  const [isOpen, setIsOpen] = useState(!isComplete);
+const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
+  const [isOpen, setIsOpen] = useState(!isComplete || isTruncated);
 
+  // Auto-close when complete (unless it was truncated, then we might want to keep it open to show the error)
   useEffect(() => {
-    if (isComplete) {
+    if (isComplete && !isTruncated) {
       setIsOpen(false);
-    } else {
+    } else if (!isComplete && !isTruncated) {
       setIsOpen(true);
     }
-  }, [isComplete]);
+  }, [isComplete, isTruncated]);
 
   return (
-    <div className="mb-3 border-l-2 border-gray-200 dark:border-dark-700 pl-3 ml-1">
+    <div className={`mb-3 border-l-2 pl-3 ml-1 ${isTruncated ? 'border-amber-400 dark:border-amber-600' : 'border-gray-200 dark:border-dark-700'}`}>
       <button 
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-2 text-xs font-medium text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors select-none"
@@ -29,6 +30,10 @@ const ThinkingProcess = ({ thought, isComplete }: { thought: string, isComplete:
         </span>
         {isComplete ? (
           <span>Thought Process</span>
+        ) : isTruncated ? (
+          <span className="text-amber-600 dark:text-amber-500 flex items-center gap-1">
+            Thought Process (Interrupted)
+          </span>
         ) : (
           <span className="animate-pulse flex items-center gap-1">
             Thinking<span className="animate-bounce">.</span><span className="animate-bounce delay-75">.</span><span className="animate-bounce delay-150">.</span>
@@ -39,6 +44,11 @@ const ThinkingProcess = ({ thought, isComplete }: { thought: string, isComplete:
       {isOpen && (
         <div className="mt-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-dark-900 p-3 rounded-md whitespace-pre-wrap leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
           {thought}
+          {isTruncated && (
+             <div className="mt-3 pt-2 border-t border-amber-200 dark:border-amber-900/30 text-amber-600 dark:text-amber-500 text-xs italic flex items-center gap-1">
+                ⚠️ Thinking process was truncated unexpectedly.
+             </div>
+          )}
         </div>
       )}
     </div>
@@ -437,10 +447,13 @@ const App: React.FC = () => {
                 const alreadyStopped = lastMsg.text.endsWith('[Stopped]') || lastMsg.text.endsWith('_⛔ Generation stopped by user_');
 
                 if (!alreadyStopped) {
-                    if (isInThinking) {
-                        lastMsg.text += "\n\n[Stopped]";
-                    } else {
+                    // If we were in thinking, we don't append text, the UI handles the 'Interrupted' state
+                    if (!isInThinking) {
                         lastMsg.text += "\n\n_⛔ Generation stopped by user_";
+                    } else {
+                        // If thinking was interrupted, we might append a subtle stopped marker for raw text logs, 
+                        // but the ThinkingProcess component handles the visuals.
+                        // We do nothing here to avoid breaking the think tag structure.
                     }
                 }
               }
@@ -760,6 +773,10 @@ const App: React.FC = () => {
             currentSession.messages.map((msg, index) => {
               const contentParts = msg.role === Role.Model ? parseMessageContent(msg.text) : null;
               const isWaitingForFirstToken = msg.role === Role.Model && msg.text === '' && isStreaming && index === currentSession.messages.length - 1;
+              
+              // Calculate if thinking is truncated
+              // Logic: Has thought, but NOT complete, and we are NO LONGER streaming.
+              const isThinkingTruncated = contentParts && contentParts.hasThought && !contentParts.isComplete && !isStreaming;
 
               return (
               <div key={msg.id} className={`flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}>
@@ -805,7 +822,11 @@ const App: React.FC = () => {
                                </div>
                            )}
                            {contentParts && contentParts.hasThought && (
-                             <ThinkingProcess thought={contentParts.thought} isComplete={contentParts.isComplete} />
+                             <ThinkingProcess 
+                                thought={contentParts.thought} 
+                                isComplete={contentParts.isComplete}
+                                isTruncated={!!isThinkingTruncated}
+                             />
                            )}
                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
                              {contentParts ? contentParts.mainContent : msg.text}
