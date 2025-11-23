@@ -9,11 +9,8 @@ interface SettingsModalProps {
   onSettingsChange: (newSettings: AppSettings) => void;
 }
 
+// Only "default" is needed as a fallback; real models come from the API.
 const DEFAULT_MODELS = [
-  "gemini-2.5-flash",
-  "gemini-1.5-flash",
-  "gpt-4o", 
-  "gpt-3.5-turbo",
   "default"
 ];
 
@@ -82,7 +79,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
     ...availableModels, 
     ...DEFAULT_MODELS, 
     settings.model
-  ]));
+  ])).filter(Boolean);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">

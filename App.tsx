@@ -163,6 +163,27 @@ const App: React.FC = () => {
     navigator.clipboard.writeText(text);
   };
 
+  const handleShare = () => {
+    const session = getCurrentSession();
+    if (!session) return;
+    
+    let markdown = `# ${session.title}\n\n`;
+    session.messages.forEach(msg => {
+      const role = msg.role === Role.User ? 'User' : 'ChatClient';
+      markdown += `### ${role}\n${msg.text}\n\n`;
+    });
+
+    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `session-${new Date().toISOString().slice(0,10)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const parseMessageContent = (text: string) => {
     const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/;
     const match = text.match(thinkRegex);
@@ -231,11 +252,17 @@ const App: React.FC = () => {
         }
       );
 
-      // Handle Title Generation AFTER first message stream completes, if enabled
-      if (historyMessages.length === 0 && settings.generateTitles) {
-          generateTitle(userText, settings).then(t => {
-              updateSessionTitle(sessionId, t);
-          });
+      // Handle Title Generation
+      if (historyMessages.length === 0) {
+        if (settings.generateTitles) {
+            generateTitle(userText, settings).then(t => {
+                updateSessionTitle(sessionId, t);
+            });
+        } else {
+            // Fallback title (max 30 chars)
+            const fallbackTitle = userText.length > 30 ? userText.slice(0, 30) + '...' : userText;
+            updateSessionTitle(sessionId, fallbackTitle);
+        }
       }
 
     } catch (error: any) {
@@ -245,8 +272,19 @@ const App: React.FC = () => {
             if (s.id === sessionId) {
               const msgs = [...s.messages];
               const lastMsg = msgs[msgs.length - 1];
+              
               if (lastMsg && lastMsg.role === Role.Model) {
-                lastMsg.text += "\n\n_⛔ Generation stopped by user_";
+                // Check if we are inside a <think> block
+                const isInThinking = lastMsg.text.includes('<think>') && !lastMsg.text.includes('</think>');
+                const alreadyStopped = lastMsg.text.endsWith('[Stopped]') || lastMsg.text.endsWith('_⛔ Generation stopped by user_');
+
+                if (!alreadyStopped) {
+                    if (isInThinking) {
+                        lastMsg.text += "\n\n[Stopped]";
+                    } else {
+                        lastMsg.text += "\n\n_⛔ Generation stopped by user_";
+                    }
+                }
               }
               return { ...s, messages: msgs };
             }
@@ -326,8 +364,11 @@ const App: React.FC = () => {
       if (!session) return;
 
       const userMessage = session.messages[userMsgIndex];
+      // Branching logic: Clear history AFTER this user message so we can rewrite it.
       const newHistory = session.messages.slice(0, userMsgIndex);
       updateSessionMessages(session.id, newHistory);
+      
+      // Load content back to input
       setInput(userMessage.text);
       setAttachments(userMessage.attachments || []);
       textareaRef.current?.focus();
@@ -339,12 +380,26 @@ const App: React.FC = () => {
       const newAttachments: FileAttachment[] = [];
 
       for (const file of filesArray) {
+        // Simple check for text/code files
+        // We accept common text/code types or if the browser says it's text/...
+        const isText = file.type.startsWith('text/') || 
+                       file.name.match(/\.(js|jsx|ts|tsx|rs|py|c|cpp|h|java|go|rb|php|html|css|json|md|yaml|toml|sh|bat|sql|xml)$/i);
+
+        if (!isText) {
+            alert(`File "${file.name}" ignored. Only text/code files are supported.`);
+            continue;
+        }
+
         try {
           const text = await file.text();
+          // Estimate token count (char count / 4 is a rough heuristic)
+          const tokens = Math.ceil(text.length / 4);
+
           newAttachments.push({
             name: file.name,
             type: file.type,
-            content: text
+            content: text,
+            tokenCount: tokens
           });
         } catch (err) {
           console.error("Failed to read file", file.name);
@@ -489,7 +544,8 @@ const App: React.FC = () => {
                        <div className="mb-3 pb-2 border-b border-gray-200 dark:border-gray-700 text-xs flex flex-wrap gap-2">
                          {msg.attachments.map((file, i) => (
                             <span key={i} className="flex items-center gap-1 bg-white dark:bg-dark-900 px-2 py-1 rounded border border-gray-200 dark:border-dark-700">
-                              📄 {file.name}
+                              📄 {file.name} 
+                              <span className="text-gray-400 dark:text-gray-500 text-[10px]">({file.tokenCount}t)</span>
                             </span>
                          ))}
                        </div>
@@ -526,9 +582,9 @@ const App: React.FC = () => {
                                <CopyIcon /> Copy
                             </button>
                             <button 
-                              onClick={() => {/* Share Logic */}}
+                              onClick={handleShare}
                               className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"
-                              title="Share Conversation"
+                              title="Download Chat History"
                             >
                                <ShareIcon /> Share
                             </button>
@@ -560,6 +616,7 @@ const App: React.FC = () => {
                    {attachments.map((f, i) => (
                      <div key={i} className="flex items-center gap-2 bg-gray-100 dark:bg-dark-800 text-xs text-gray-600 dark:text-gray-300 pl-3 pr-2 py-1.5 rounded-full border border-gray-200 dark:border-dark-700 shadow-sm animate-in fade-in slide-in-from-bottom-2">
                         <span className="truncate max-w-[120px] font-medium">{f.name}</span>
+                        <span className="text-gray-400 text-[10px]">{f.tokenCount}t</span>
                         <button 
                           onClick={() => setAttachments(prev => prev.filter((_, idx) => idx !== i))} 
                           className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-gray-200 dark:hover:bg-dark-600 text-gray-400 transition-colors"

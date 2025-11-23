@@ -7,6 +7,7 @@ export interface FileAttachment {
   name: string;
   type: string;
   content: string; // Text content
+  tokenCount?: number;
 }
 
 export interface Message {
@@ -56,7 +57,7 @@ declare global {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  model: 'gemini-2.5-flash',
+  model: 'default',
   temperature: 0.7,
   topK: 0, 
   topP: 0.95,
