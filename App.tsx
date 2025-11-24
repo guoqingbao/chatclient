@@ -142,8 +142,10 @@ const App: React.FC = () => {
   // Edit State
   const [editingMessage, setEditingMessage] = useState<{index: number, text: string} | null>(null);
 
-  // Token Usage State
-  const [tokenStats, setTokenStats] = useState<TokenUsage | null>(null);
+  // Token Usage State (Split)
+  const [contextStats, setContextStats] = useState<{used: number, total: number} | null>(null);
+  const [kvStats, setKvStats] = useState<{used: number, total: number} | null>(null);
+
   // Ref to track usage polling failures to auto-kill the thread
   const usageFailuresRef = useRef(0);
   
@@ -241,20 +243,40 @@ const App: React.FC = () => {
   useEffect(() => {
     // Only poll if context cache is enabled AND we are connected to a custom server
     if (!settings.contextCache || !currentSessionId || !isCustomServer(settings.serverUrl)) {
-        setTokenStats(null);
+        setContextStats(null);
+        // We do NOT clear kvStats here, as it might be relevant across sessions
         return;
     }
+    
     usageFailuresRef.current = 0;
+    
     const pollUsage = async () => {
         if (usageFailuresRef.current > 5) return;
+        
+        // Use the ID from closure if needed, but safer to pass explicit
         const stats = await fetchTokenUsage(currentSessionId, settings);
+        
         if (stats) {
-            setTokenStats(stats);
+            // Update Context Stats (Session Specific)
+            setContextStats({
+                used: stats.token_used,
+                total: stats.max_model_len
+            });
+
+            // Update KV Stats (Global)
+            if (stats.total_kv_cache_tokens) {
+                setKvStats({
+                    used: stats.used_kvcache_tokens,
+                    total: stats.total_kv_cache_tokens
+                });
+            }
+
             usageFailuresRef.current = 0;
         } else {
             usageFailuresRef.current += 1;
         }
     };
+    
     pollUsage();
     const intervalId = setInterval(pollUsage, 3000);
     return () => clearInterval(intervalId);
@@ -312,7 +334,10 @@ const App: React.FC = () => {
     };
     setSessions(prev => [newSession, ...prev]);
     setCurrentSessionId(newSession.id);
-    setTokenStats(null); // Reset stats
+    
+    setContextStats(null); // Reset session-specific stats
+    // KV Stats are preserved globally
+
     usageFailuresRef.current = 0; // Reset polling check
     shouldAutoScrollRef.current = true; // Reset scroll lock
     setTimeout(() => textareaRef.current?.focus(), 100);
@@ -529,7 +554,7 @@ const App: React.FC = () => {
     if (!activeSessionId) return;
 
     // CLIENT SIDE TOKEN GUARD
-    if (settings.contextCache && tokenStats && tokenStats.max_model_len > 1024) {
+    if (settings.contextCache && contextStats && contextStats.total > 1024) {
         let totalEstimated = 0;
         currentHistory.forEach(m => {
              totalEstimated += estimateTokenCount(m.text);
@@ -538,9 +563,9 @@ const App: React.FC = () => {
         totalEstimated += estimateTokenCount(input);
         attachments.forEach(a => totalEstimated += (a.tokenCount || 0));
 
-        const limit = tokenStats.max_model_len * 1.3;
+        const limit = contextStats.total * 1.3;
         if (totalEstimated > limit) {
-             alert(`Message blocked: Estimated token usage (${totalEstimated}) exceeds 130% of model limit (${tokenStats.max_model_len}). Please start a new chat or shorten context.`);
+             alert(`Message blocked: Estimated token usage (${totalEstimated}) exceeds 130% of model limit (${contextStats.total}). Please start a new chat or shorten context.`);
              return;
         }
     }
@@ -592,7 +617,10 @@ const App: React.FC = () => {
         }));
         
         setCurrentSessionId(newSessionId);
-        setTokenStats(null); // Reset stats
+        
+        setContextStats(null); // Reset session stats for new ID
+        // KV stats preserved
+        
         usageFailuresRef.current = 0;
         
         // Execute with new ID
@@ -641,7 +669,10 @@ const App: React.FC = () => {
       }));
       
       setCurrentSessionId(newSessionId);
-      setTokenStats(null); 
+      
+      setContextStats(null); // Reset session stats
+      // KV stats preserved
+      
       usageFailuresRef.current = 0;
       
       executeStream(newSessionId, historyBeforeTurn, newText, originalMessage.attachments || []);
@@ -698,7 +729,7 @@ const App: React.FC = () => {
       setSessions(newSessions);
       if (currentSessionId === id) {
         setCurrentSessionId(newSessions.length > 0 ? newSessions[0].id : null);
-        setTokenStats(null);
+        setContextStats(null); // Clear context stats for deleted session
       }
     }
   };
@@ -735,7 +766,10 @@ const App: React.FC = () => {
             <div 
               key={session.id}
               onClick={() => {
-                  if (!isStreaming) setCurrentSessionId(session.id);
+                  if (!isStreaming) {
+                      setCurrentSessionId(session.id);
+                      setContextStats(null); // Clear context stats when switching, will re-poll
+                  }
               }}
               className={`group relative flex items-center px-3 py-2.5 text-sm rounded-lg transition-all ${
                 currentSessionId === session.id 
@@ -1004,25 +1038,27 @@ const App: React.FC = () => {
               
               <div className="flex flex-col items-center mt-3 gap-1">
                  {/* Footer Token Indicator */}
-                 {settings.contextCache && tokenStats && (
+                 {settings.contextCache && (contextStats || kvStats) && (
                     <div className="flex items-center gap-3 px-3 py-1 rounded-full bg-gray-100 dark:bg-dark-900 border border-gray-200 dark:border-dark-800 text-[10px] font-mono text-gray-500 dark:text-gray-400 animate-in fade-in slide-in-from-bottom-2">
-                        {/* Context Usage */}
-                        <div className="flex items-center gap-1.5" title="Context Window Usage">
-                            <span className={`w-1.5 h-1.5 rounded-full ${tokenStats.token_used > tokenStats.max_model_len * 0.9 ? 'bg-red-500' : tokenStats.token_used > tokenStats.max_model_len * 0.7 ? 'bg-yellow-500' : 'bg-green-500'}`}></span>
-                            <span>CTX: {tokenStats.token_used.toLocaleString()} / {tokenStats.max_model_len.toLocaleString()}</span>
-                        </div>
-                        <div className="w-px h-3 bg-gray-300 dark:bg-dark-700"></div>
-                        {/* KV Cache Usage */}
-                        <div className="flex items-center gap-1.5" title="KV Cache Usage">
-                           {tokenStats.total_kv_cache_tokens ? (
-                               <>
-                                <span className={`w-1.5 h-1.5 rounded-full ${tokenStats.used_kvcache_tokens > tokenStats.total_kv_cache_tokens * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span>
-                                <span>KV: {tokenStats.used_kvcache_tokens.toLocaleString()} / {tokenStats.total_kv_cache_tokens.toLocaleString()}</span>
-                               </>
-                           ) : (
-                               <span>KV Used: {tokenStats.used_kvcache_tokens.toLocaleString()}</span>
-                           )}
-                        </div>
+                        {/* Context Usage - Only show if session has data */}
+                        {contextStats && (
+                            <div className="flex items-center gap-1.5" title="Context Window Usage">
+                                <span className={`w-1.5 h-1.5 rounded-full ${contextStats.used > contextStats.total * 0.9 ? 'bg-red-500' : contextStats.used > contextStats.total * 0.7 ? 'bg-yellow-500' : 'bg-green-500'}`}></span>
+                                <span>CTX: {contextStats.used.toLocaleString()} / {contextStats.total.toLocaleString()}</span>
+                            </div>
+                        )}
+                        
+                        {contextStats && kvStats && (
+                            <div className="w-px h-3 bg-gray-300 dark:bg-dark-700"></div>
+                        )}
+
+                        {/* KV Cache Usage - Always show if available (Global) */}
+                        {kvStats && (
+                            <div className="flex items-center gap-1.5" title="KV Cache Usage">
+                               <span className={`w-1.5 h-1.5 rounded-full ${kvStats.used > kvStats.total * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                               <span>KV: {kvStats.used.toLocaleString()} / {kvStats.total.toLocaleString()}</span>
+                            </div>
+                        )}
                     </div>
                  )}
                  <p className="text-[10px] text-gray-400 dark:text-gray-600">
