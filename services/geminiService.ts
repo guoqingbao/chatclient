@@ -1,4 +1,3 @@
-
 import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
 
 // Helper to prepare messages for OpenAI format
@@ -71,8 +70,10 @@ const getEndpoint = (baseUrl: string) => {
 };
 
 // Exported for usage check in App.tsx
+// Updated heuristic: Treat 1 word as 1 token (split by whitespace)
 export const estimateTokenCount = (text: string): number => {
-  return Math.ceil(text.length / 2);
+  if (!text) return 0;
+  return text.trim().split(/\s+/).length;
 };
 
 export const fetchServerConfig = async (): Promise<ServerConfig | null> => {

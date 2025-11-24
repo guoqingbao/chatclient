@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
@@ -554,19 +553,32 @@ const App: React.FC = () => {
     if (!activeSessionId) return;
 
     // CLIENT SIDE TOKEN GUARD
-    if (settings.contextCache && contextStats && contextStats.total > 1024) {
-        let totalEstimated = 0;
-        currentHistory.forEach(m => {
-             totalEstimated += estimateTokenCount(m.text);
-             m.attachments?.forEach(a => totalEstimated += (a.tokenCount || 0));
-        });
-        totalEstimated += estimateTokenCount(input);
-        attachments.forEach(a => totalEstimated += (a.tokenCount || 0));
+    const newMessageTokens = estimateTokenCount(input) + attachments.reduce((acc, f) => acc + (f.tokenCount || 0), 0);
 
-        const limit = contextStats.total * 1.3;
-        if (totalEstimated > limit) {
-             alert(`Message blocked: Estimated token usage (${totalEstimated}) exceeds 130% of model limit (${contextStats.total}). Please start a new chat or shorten context.`);
+    if (settings.contextCache && contextStats && contextStats.total > 0) {
+        // Precise Check: Based on server stats
+        const availableTokens = contextStats.total - contextStats.used;
+        
+        // Strict check: if new message exceeds remaining space
+        if (newMessageTokens > availableTokens) {
+             alert(`Message blocked: Estimated token usage (${newMessageTokens}) exceeds remaining context space (${availableTokens}). Please start a new chat or shorten context.`);
              return;
+        }
+    } else {
+        // Fallback Heuristic Check (if server stats unavailable)
+        // Estimate total session history + new message
+        let totalSessionTokens = 0;
+        currentHistory.forEach(m => {
+             totalSessionTokens += estimateTokenCount(m.text);
+             m.attachments?.forEach(a => totalSessionTokens += (a.tokenCount || 0));
+        });
+        totalSessionTokens += newMessageTokens;
+
+        // Limit to 150% of the Max Output Tokens setting (acting as a proxy for context limit in fallback mode)
+        const fallbackLimit = settings.maxOutputTokens * 1.5;
+        if (totalSessionTokens > fallbackLimit) {
+            alert(`Message blocked: Estimated conversation tokens (${totalSessionTokens}) exceeds fallback limit (${fallbackLimit}). Please start a new chat.`);
+            return;
         }
     }
 
@@ -695,7 +707,8 @@ const App: React.FC = () => {
 
         try {
           const text = await file.text();
-          const tokens = Math.ceil(text.length / 2);
+          // Use the exported estimation helper for consistency
+          const tokens = estimateTokenCount(text);
           newAttachments.push({
             name: file.name,
             type: file.type,
