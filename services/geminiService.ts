@@ -1,4 +1,3 @@
-
 import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
 
 // Helper to prepare messages for OpenAI format
@@ -57,12 +56,25 @@ const getEndpoint = (baseUrl: string) => {
   cleanBase = cleanBase.replace('0.0.0.0', 'localhost');
   
   // Ensure protocol
-  if (!cleanBase.startsWith('http')) {
+  if (!cleanBase.startsWith('http') && !cleanBase.startsWith('/')) {
     cleanBase = 'http://' + cleanBase;
   }
   
   cleanBase = cleanBase.replace(/\/+$/, ''); // Remove trailing slash
   
+  // VITE DEV PROXY FIX: 
+  // If we are in Dev mode and targeting a local address, force relative path
+  // to use the Vite proxy. This ensures AbortSignal works in VS Code port forwarding.
+  // We check for common local variations.
+  const isDev = (import.meta as any).env.DEV;
+  if (isDev) {
+      if (cleanBase.includes('localhost') || cleanBase.includes('127.0.0.1')) {
+          // Note: This relies on vite.config.ts proxying /v1 to the correct backend port (default 8000).
+          // If the backend is on a different port in DEV, this might fail unless vite.config.ts is updated.
+          return '/v1/chat/completions';
+      }
+  }
+
   if (cleanBase.endsWith('/chat/completions')) return cleanBase;
   if (cleanBase.endsWith('/v1')) return `${cleanBase}/chat/completions`;
   
@@ -102,10 +114,16 @@ export const fetchTokenUsage = async (
     // Construct usage endpoint: http://localhost:8000/v1/usage
     let baseUrl = settings.serverUrl.trim().replace(/\/+$/, '');
     baseUrl = baseUrl.replace('0.0.0.0', 'localhost');
-    if (!baseUrl.startsWith('http')) baseUrl = 'http://' + baseUrl;
+    if (!baseUrl.startsWith('http') && !baseUrl.startsWith('/')) baseUrl = 'http://' + baseUrl;
     
     // If url ends with /chat/completions, strip it to get base
     baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
+
+    // DEV PROXY FIX for Usage
+    const isDev = (import.meta as any).env.DEV;
+    if (isDev && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
+        baseUrl = '/v1';
+    }
 
     // Assuming endpoint is relative to base, e.g. /v1/usage
     const url = `${baseUrl}/usage?session_id=${sessionId}`;
@@ -183,7 +201,7 @@ export const streamChatResponse = async (
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal, // Pass abort signal
+      signal, // Pass abort signal to fetch
       credentials: 'omit' 
     });
 
@@ -212,51 +230,70 @@ export const streamChatResponse = async (
     if (!response.body) throw new Error("No response body");
 
     reader = response.body.getReader();
+    
+    // CRITICAL FIX: Explicitly listen for abort to cancel the reader immediately.
+    // The while-loop check is not enough if the reader is awaiting a chunk.
+    const abortHandler = () => {
+        reader?.cancel().catch(() => {});
+    };
+    signal.addEventListener('abort', abortHandler);
+
     const decoder = new TextDecoder("utf-8");
     let done = false;
     let accumulatedText = "";
 
     while (!done) {
-      // Explicitly check signal before reading
+      // Double check before reading
       if (signal.aborted) {
-         await reader.cancel();
          break;
       }
 
-      const { value, done: readerDone } = await reader.read();
-      done = readerDone;
-      if (value) {
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+      try {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
         
-        for (const line of lines) {
-          if (line.trim() === '') continue;
-          if (line.trim() === 'data: [DONE]') continue;
-          
-          if (line.startsWith('data: ')) {
-            try {
-              const jsonStr = line.replace('data: ', '');
-              const json = JSON.parse(jsonStr);
-              
-              if (json.choices && json.choices.length > 0) {
-                const delta = json.choices[0].delta;
-                if (delta.content) {
-                  accumulatedText += delta.content;
-                  onChunk(accumulatedText);
+        if (value) {
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+            if (line.trim() === '') continue;
+            if (line.trim() === 'data: [DONE]') continue;
+            
+            if (line.startsWith('data: ')) {
+                try {
+                const jsonStr = line.replace('data: ', '');
+                const json = JSON.parse(jsonStr);
+                
+                if (json.choices && json.choices.length > 0) {
+                    const delta = json.choices[0].delta;
+                    if (delta.content) {
+                    accumulatedText += delta.content;
+                    onChunk(accumulatedText);
+                    }
                 }
-              }
-            } catch (e) {
-              // Ignore parse errors for partial chunks
+                } catch (e) {
+                // Ignore parse errors for partial chunks
+                }
             }
-          }
+            }
         }
+      } catch (readError: any) {
+          // If the error is due to abort (cancel), break loop gracefully
+          if (signal.aborted) {
+              break;
+          }
+          throw readError;
       }
     }
 
+    signal.removeEventListener('abort', abortHandler);
     return accumulatedText;
   } catch (error: any) {
-    if (error.name === 'AbortError') {
-        throw error; // Re-throw for App.tsx to handle
+    if (error.name === 'AbortError' || signal.aborted) {
+        // Ensure reader is closed
+        if (reader) await reader.cancel().catch(() => {});
+        throw new DOMException('Aborted', 'AbortError'); // Normalize error
     }
     // CORS specific hint
     if (error.message && error.message.includes('Failed to fetch')) {
@@ -264,12 +301,11 @@ export const streamChatResponse = async (
     }
     throw error;
   } finally {
-      // Ensure reader is closed
+      // Final cleanup
       if (reader) {
           try {
-             await reader.cancel(); 
+             reader.releaseLock();
           } catch(e) {}
-          reader.releaseLock();
       }
   }
 };
