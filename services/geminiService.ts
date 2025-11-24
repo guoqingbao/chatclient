@@ -62,19 +62,7 @@ const getEndpoint = (baseUrl: string) => {
   
   cleanBase = cleanBase.replace(/\/+$/, ''); // Remove trailing slash
   
-  // VITE DEV PROXY FIX: 
-  // If we are in Dev mode and targeting a local address, force relative path
-  // to use the Vite proxy. This ensures AbortSignal works in VS Code port forwarding.
-  // We check for common local variations.
-  const isDev = (import.meta as any).env.DEV;
-  if (isDev) {
-      if (cleanBase.includes('localhost') || cleanBase.includes('127.0.0.1')) {
-          // Note: This relies on vite.config.ts proxying /v1 to the correct backend port (default 8000).
-          // If the backend is on a different port in DEV, this might fail unless vite.config.ts is updated.
-          return '/v1/chat/completions';
-      }
-  }
-
+  // Standard suffix handling
   if (cleanBase.endsWith('/chat/completions')) return cleanBase;
   if (cleanBase.endsWith('/v1')) return `${cleanBase}/chat/completions`;
   
@@ -118,12 +106,6 @@ export const fetchTokenUsage = async (
     
     // If url ends with /chat/completions, strip it to get base
     baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
-
-    // DEV PROXY FIX for Usage
-    const isDev = (import.meta as any).env.DEV;
-    if (isDev && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
-        baseUrl = '/v1';
-    }
 
     // Assuming endpoint is relative to base, e.g. /v1/usage
     const url = `${baseUrl}/usage?session_id=${sessionId}`;
@@ -231,8 +213,8 @@ export const streamChatResponse = async (
 
     reader = response.body.getReader();
     
-    // CRITICAL FIX: Explicitly listen for abort to cancel the reader immediately.
-    // The while-loop check is not enough if the reader is awaiting a chunk.
+    // CRITICAL: Explicitly listen for abort to cancel the reader immediately.
+    // This handles cases where the stream is hung waiting for data.
     const abortHandler = () => {
         reader?.cancel().catch(() => {});
     };
