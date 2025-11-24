@@ -1,3 +1,4 @@
+
 import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
 
 // Helper to prepare messages for OpenAI format
@@ -75,6 +76,12 @@ export const estimateTokenCount = (text: string): number => {
 };
 
 export const fetchServerConfig = async (): Promise<ServerConfig | null> => {
+    // Skip in Dev mode to avoid startup delays and 404s, assuming dev uses localhost:8000
+    // @ts-ignore
+    if (import.meta.env && import.meta.env.DEV) {
+        return null;
+    }
+
     try {
         // Fetch from the same origin that served the web app
         // The Rust backend should intercept this route and return the JSON

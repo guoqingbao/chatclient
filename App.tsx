@@ -980,14 +980,14 @@ const App: React.FC = () => {
                         </div>
                         <div className="w-px h-3 bg-gray-300 dark:bg-dark-700"></div>
                         {/* KV Cache Usage */}
-                        <div className="flex items-center gap-1.5" title="KV Cache Availability">
+                        <div className="flex items-center gap-1.5" title="KV Cache Usage">
                            {tokenStats.total_kv_cache_tokens ? (
                                <>
-                                <span className={`w-1.5 h-1.5 rounded-full ${tokenStats.available_kvcache_tokens < tokenStats.total_kv_cache_tokens * 0.1 ? 'bg-red-500' : 'bg-green-500'}`}></span>
-                                <span>KV: {tokenStats.available_kvcache_tokens.toLocaleString()} / {tokenStats.total_kv_cache_tokens.toLocaleString()}</span>
+                                <span className={`w-1.5 h-1.5 rounded-full ${tokenStats.used_kvcache_tokens > tokenStats.total_kv_cache_tokens * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                                <span>KV: {tokenStats.used_kvcache_tokens.toLocaleString()} / {tokenStats.total_kv_cache_tokens.toLocaleString()}</span>
                                </>
                            ) : (
-                               <span>KV Available: {tokenStats.available_kvcache_tokens.toLocaleString()}</span>
+                               <span>KV Used: {tokenStats.used_kvcache_tokens.toLocaleString()}</span>
                            )}
                         </div>
                     </div>
