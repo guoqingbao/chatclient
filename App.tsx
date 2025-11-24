@@ -1,10 +1,11 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage } from './types';
 import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig } from './services/geminiService';
-import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon } from './components/Icon';
+import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
 const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
@@ -277,6 +278,8 @@ const App: React.FC = () => {
   const getCurrentSession = () => sessions.find(s => s.id === currentSessionId);
 
   const createNewSession = () => {
+    if (isStreaming) return null; // Block creating new session while streaming
+    
     const newSession: ChatSession = {
       id: uuidv4(),
       title: 'New Chat',
@@ -491,7 +494,9 @@ const App: React.FC = () => {
     let currentHistory: Message[] = [];
 
     if (!activeSessionId) {
-      activeSessionId = createNewSession();
+      const newId = createNewSession();
+      if (!newId) return; // creation failed (blocked by streaming)
+      activeSessionId = newId;
     } else {
       const session = sessions.find(s => s.id === activeSessionId);
       if (session) currentHistory = session.messages;
@@ -653,6 +658,8 @@ const App: React.FC = () => {
 
   const deleteSession = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
+    if (isStreaming && id === currentSessionId) return; // Prevent deleting active stream
+
     if (window.confirm("Are you sure you want to delete this chat history?")) {
       const newSessions = sessions.filter(s => s.id !== id);
       setSessions(newSessions);
@@ -682,7 +689,8 @@ const App: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
           <button 
             onClick={() => createNewSession()}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 hover:bg-gray-100 dark:hover:bg-dark-700 text-gray-900 dark:text-gray-100 rounded-xl transition-all text-sm font-medium shadow-sm mb-4 group"
+            disabled={isStreaming}
+            className={`w-full flex items-center justify-center gap-2 px-4 py-3 bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 text-gray-900 dark:text-gray-100 rounded-xl transition-all text-sm font-medium shadow-sm mb-4 group ${isStreaming ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-dark-700'}`}
           >
             <span className="text-xl leading-none font-light text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">+</span> 
             <span>New Chat</span>
@@ -693,20 +701,29 @@ const App: React.FC = () => {
           {sessions.map(session => (
             <div 
               key={session.id}
-              onClick={() => setCurrentSessionId(session.id)}
-              className={`group relative flex items-center px-3 py-2.5 text-sm rounded-lg cursor-pointer transition-all ${
+              onClick={() => {
+                  if (!isStreaming) setCurrentSessionId(session.id);
+              }}
+              className={`group relative flex items-center px-3 py-2.5 text-sm rounded-lg transition-all ${
                 currentSessionId === session.id 
                   ? 'bg-gray-200 dark:bg-dark-800 text-gray-900 dark:text-white font-medium shadow-sm' 
                   : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-dark-800'
-              }`}
+              } ${isStreaming ? 'cursor-not-allowed' : 'cursor-pointer'}`}
             >
               <span className="truncate flex-1 pr-6">{session.title}</span>
-              <button 
-                onClick={(e) => deleteSession(e, session.id)}
-                className="absolute right-2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity"
-              >
-                ×
-              </button>
+              {currentSessionId === session.id && isStreaming && (
+                 <div className="absolute right-2 text-indigo-500">
+                    <WritingIcon />
+                 </div>
+              )}
+              {!isStreaming && (
+                <button 
+                  onClick={(e) => deleteSession(e, session.id)}
+                  className="absolute right-2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity"
+                >
+                  ×
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -904,7 +921,8 @@ const App: React.FC = () => {
               <div className="relative flex items-end gap-2 bg-gray-50 dark:bg-dark-900 border border-gray-300 dark:border-dark-700 rounded-3xl shadow-sm focus-within:shadow-md focus-within:border-gray-400 dark:focus-within:border-gray-500 transition-all p-2">
                  <button 
                     onClick={() => fileInputRef.current?.click()}
-                    className="p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors rounded-full hover:bg-gray-200 dark:hover:bg-dark-800 flex-shrink-0"
+                    disabled={isStreaming}
+                    className="p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors rounded-full hover:bg-gray-200 dark:hover:bg-dark-800 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Upload files"
                   >
                     <PaperClipIcon />
@@ -921,14 +939,15 @@ const App: React.FC = () => {
                     ref={textareaRef}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
+                    disabled={isStreaming}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         handleSendMessage();
                       }
                     }}
-                    placeholder="Message ChatClient..."
-                    className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none py-3 px-4 max-h-[200px] min-h-[24px] leading-6 custom-scrollbar"
+                    placeholder={isStreaming ? "Wait for response..." : "Message ChatClient..."}
+                    className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none py-3 px-4 max-h-[200px] min-h-[24px] leading-6 custom-scrollbar disabled:cursor-not-allowed"
                     rows={1}
                  />
 
@@ -954,13 +973,22 @@ const App: React.FC = () => {
                  {/* Footer Token Indicator */}
                  {settings.contextCache && tokenStats && (
                     <div className="flex items-center gap-3 px-3 py-1 rounded-full bg-gray-100 dark:bg-dark-900 border border-gray-200 dark:border-dark-800 text-[10px] font-mono text-gray-500 dark:text-gray-400 animate-in fade-in slide-in-from-bottom-2">
-                        <div className="flex items-center gap-1.5">
-                            <span className={`w-1.5 h-1.5 rounded-full ${tokenStats.token_used > tokenStats.max_model_len * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span>
-                            <span>{tokenStats.token_used.toLocaleString()} / {tokenStats.max_model_len.toLocaleString()}</span>
+                        {/* Context Usage */}
+                        <div className="flex items-center gap-1.5" title="Context Window Usage">
+                            <span className={`w-1.5 h-1.5 rounded-full ${tokenStats.token_used > tokenStats.max_model_len * 0.9 ? 'bg-red-500' : tokenStats.token_used > tokenStats.max_model_len * 0.7 ? 'bg-yellow-500' : 'bg-green-500'}`}></span>
+                            <span>CTX: {tokenStats.token_used.toLocaleString()} / {tokenStats.max_model_len.toLocaleString()}</span>
                         </div>
                         <div className="w-px h-3 bg-gray-300 dark:bg-dark-700"></div>
-                        <div>
-                            KvCache: {tokenStats.available_kvcache_tokens.toLocaleString()}
+                        {/* KV Cache Usage */}
+                        <div className="flex items-center gap-1.5" title="KV Cache Availability">
+                           {tokenStats.total_kv_cache_tokens ? (
+                               <>
+                                <span className={`w-1.5 h-1.5 rounded-full ${tokenStats.available_kvcache_tokens < tokenStats.total_kv_cache_tokens * 0.1 ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                                <span>KV: {tokenStats.available_kvcache_tokens.toLocaleString()} / {tokenStats.total_kv_cache_tokens.toLocaleString()}</span>
+                               </>
+                           ) : (
+                               <span>KV Available: {tokenStats.available_kvcache_tokens.toLocaleString()}</span>
+                           )}
                         </div>
                     </div>
                  )}

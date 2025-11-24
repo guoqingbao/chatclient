@@ -1,3 +1,4 @@
+
 import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
 
 // Helper to prepare messages for OpenAI format
@@ -172,10 +173,10 @@ export const streamChatResponse = async (
 
   // Inject session_id if context caching is enabled
   if (settings.contextCache) {
-      // Per OpenAI spec/LocalAI/vLLM extensions, extra params often go in root or specific fields
-      // We inject into root as requested for "extra_body" simulation
       body.session_id = sessionId;
   }
+
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   try {
     const response = await fetch(url, {
@@ -210,12 +211,18 @@ export const streamChatResponse = async (
 
     if (!response.body) throw new Error("No response body");
 
-    const reader = response.body.getReader();
+    reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let done = false;
     let accumulatedText = "";
 
     while (!done) {
+      // Explicitly check signal before reading
+      if (signal.aborted) {
+         await reader.cancel();
+         break;
+      }
+
       const { value, done: readerDone } = await reader.read();
       done = readerDone;
       if (value) {
@@ -239,7 +246,7 @@ export const streamChatResponse = async (
                 }
               }
             } catch (e) {
-              console.warn("Failed to parse SSE chunk", e);
+              // Ignore parse errors for partial chunks
             }
           }
         }
@@ -256,6 +263,14 @@ export const streamChatResponse = async (
         throw new Error(`Connection failed. Check if server is running and accessible (CORS issues or invalid URL). ${error.message}`);
     }
     throw error;
+  } finally {
+      // Ensure reader is closed
+      if (reader) {
+          try {
+             await reader.cancel(); 
+          } catch(e) {}
+          reader.releaseLock();
+      }
   }
 };
 
