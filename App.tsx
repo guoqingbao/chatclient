@@ -175,7 +175,10 @@ const App: React.FC = () => {
             if (attempts < maxAttempts) {
                 setTimeout(loadConfig, 2000);
             } else {
-                setConfigError(`Unable to obtain server config automatically. Using default: ${DEFAULT_SETTINGS.serverUrl}`);
+                const errorMsg = `Unable to obtain server config automatically. Using default: ${DEFAULT_SETTINGS.serverUrl}`;
+                setConfigError(errorMsg);
+                // Clear error message after 1 minute
+                setTimeout(() => setConfigError(null), 60000);
             }
         }
     };
@@ -214,9 +217,30 @@ const App: React.FC = () => {
     localStorage.setItem('chat_client_settings', JSON.stringify(settings));
   }, [settings]);
 
+  // Helper to check if server is a custom server (Local/IP/Port)
+  const isCustomServer = useCallback((url: string) => {
+    if (!url) return false;
+    // Check for localhost or specific IPs
+    if (url.includes('localhost') || url.includes('127.0.0.1')) return true;
+    
+    // Check for explicit port usage (heuristic: colon followed by digits)
+    // E.g. http://192.168.1.1:8000
+    try {
+        const urlObj = new URL(url.startsWith('http') ? url : `http://${url}`);
+        // If there is a port specified in the URL authority, treat as custom
+        if (urlObj.port) return true;
+    } catch (e) {
+        // Fallback simple regex if URL parse fails
+        if (/:[0-9]+/.test(url)) return true;
+    }
+    
+    return false;
+  }, []);
+
   // Token Usage Polling
   useEffect(() => {
-    if (!settings.contextCache || !currentSessionId) {
+    // Only poll if context cache is enabled AND we are connected to a custom server
+    if (!settings.contextCache || !currentSessionId || !isCustomServer(settings.serverUrl)) {
         setTokenStats(null);
         return;
     }
@@ -234,7 +258,7 @@ const App: React.FC = () => {
     pollUsage();
     const intervalId = setInterval(pollUsage, 3000);
     return () => clearInterval(intervalId);
-  }, [currentSessionId, settings.contextCache, settings.serverUrl]);
+  }, [currentSessionId, settings.contextCache, settings.serverUrl, isCustomServer]);
 
 
   useEffect(() => {
@@ -660,7 +684,16 @@ const App: React.FC = () => {
     e.stopPropagation();
     if (isStreaming && id === currentSessionId) return; // Prevent deleting active stream
 
-    if (window.confirm("Are you sure you want to delete this chat history?")) {
+    const sessionToDelete = sessions.find(s => s.id === id);
+    if (!sessionToDelete) return;
+
+    // Only prompt confirmation if there are messages
+    let shouldDelete = true;
+    if (sessionToDelete.messages.length > 0) {
+        shouldDelete = window.confirm("Are you sure you want to delete this chat history?");
+    }
+
+    if (shouldDelete) {
       const newSessions = sessions.filter(s => s.id !== id);
       setSessions(newSessions);
       if (currentSessionId === id) {
@@ -750,7 +783,7 @@ const App: React.FC = () => {
         
         {/* Error Banner */}
         {configError && (
-            <div className="bg-red-500 text-white text-xs p-2 text-center">
+            <div className="bg-red-500 text-white text-xs p-2 text-center animate-pulse">
                 {configError}
             </div>
         )}

@@ -76,12 +76,6 @@ export const estimateTokenCount = (text: string): number => {
 };
 
 export const fetchServerConfig = async (): Promise<ServerConfig | null> => {
-    // Skip in Dev mode to avoid startup delays and 404s, assuming dev uses localhost:8000
-    // @ts-ignore
-    if (import.meta.env && import.meta.env.DEV) {
-        return null;
-    }
-
     try {
         // Fetch from the same origin that served the web app
         // The Rust backend should intercept this route and return the JSON
@@ -136,7 +130,12 @@ export const fetchTokenUsage = async (
     
     // Validate response shape
     if (typeof data.token_used === 'number' && typeof data.max_model_len === 'number') {
-      return data as TokenUsage;
+      return {
+          token_used: data.token_used,
+          max_model_len: data.max_model_len,
+          used_kvcache_tokens: data.used_kvcache_tokens || 0, // Fallback
+          total_kv_cache_tokens: data.total_kv_cache_tokens
+      } as TokenUsage;
     }
     return null;
   } catch (error) {
