@@ -4,7 +4,7 @@ export enum Role {
   Model = 'model',
 }
 
-export type SessionStatus = 'Running' | 'Cached' | 'Swapped' | 'Finished';
+export type SessionStatus = 'Running' | 'Waiting' | 'Cached' | 'Swapped' | 'Finished';
 
 export interface FileAttachment {
   name: string;

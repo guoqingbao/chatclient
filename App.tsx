@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage, SessionStatus } from './types';
 import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig } from './services/geminiService';
-import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon } from './components/Icon';
+import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
 const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
@@ -150,11 +150,8 @@ const App: React.FC = () => {
   const [kvStats, setKvStats] = useState<{used: number, total: number} | null>(null);
   const [swapStats, setSwapStats] = useState<{used: number, total: number} | null>(null);
 
-  // Map to store latest status of each session for sidebar hints
-  const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionStatus>>(() => {
-     const stored = localStorage.getItem('chat_client_statuses');
-     return stored ? JSON.parse(stored) : {};
-  });
+  // Map to store latest status of each session for sidebar hints (Runtime only)
+  const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionStatus>>({});
 
   // Ref to track usage polling failures to auto-kill the thread
   const usageFailuresRef = useRef(0);
@@ -229,9 +226,7 @@ const App: React.FC = () => {
     localStorage.setItem('chat_client_settings', JSON.stringify(settings));
   }, [settings]);
 
-  useEffect(() => {
-    localStorage.setItem('chat_client_statuses', JSON.stringify(sessionStatuses));
-  }, [sessionStatuses]);
+  // Removed localStorage persistence for sessionStatuses as requested
 
   // Helper to check if server is a custom server (Local/IP/Port)
   const isCustomServer = useCallback((url: string) => {
@@ -294,7 +289,7 @@ const App: React.FC = () => {
                 });
             }
 
-            // Update Session Status Map
+            // Update Session Status Map (Runtime only)
             if (stats.session_status) {
                 setSessionStatuses(prev => ({
                     ...prev,
@@ -840,6 +835,7 @@ const App: React.FC = () => {
                     <div className="text-indigo-500"><WritingIcon /></div>
                  ) : (
                     <>
+                        {sessionStatus === 'Waiting' && <WaitingIcon />}
                         {sessionStatus === 'Cached' && <CachedIcon />}
                         {sessionStatus === 'Swapped' && <SwappedIcon />}
                     </>
@@ -1121,6 +1117,7 @@ const App: React.FC = () => {
                         {contextStats?.status && (
                             <div className="flex items-center pr-1" title={`Session Status: ${contextStats.status}`}>
                                 {contextStats.status === 'Running' && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />}
+                                {contextStats.status === 'Waiting' && <WaitingIcon />}
                                 {contextStats.status === 'Cached' && <CachedIcon />}
                                 {contextStats.status === 'Swapped' && <SwappedIcon />}
                                 {contextStats.status === 'Finished' && <span className="w-2 h-2 rounded-full bg-gray-400" />}
