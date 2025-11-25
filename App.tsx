@@ -134,6 +134,9 @@ const App: React.FC = () => {
 
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  // Track which session is actually streaming in the background
+  const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null);
+
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -405,6 +408,8 @@ const App: React.FC = () => {
     userAttachments: FileAttachment[]
   ) => {
     setIsStreaming(true);
+    setStreamingSessionId(sessionId); // Track active stream ID
+
     shouldAutoScrollRef.current = true; // Force scroll to bottom on start
     abortControllerRef.current = new AbortController();
 
@@ -530,6 +535,7 @@ const App: React.FC = () => {
     } finally {
       cancelAnimationFrame(animationFrameId); // Ensure loop stops
       setIsStreaming(false);
+      setStreamingSessionId(null); // Clear active stream ID
       abortControllerRef.current = null;
       setTimeout(() => textareaRef.current?.focus(), 50);
     }
@@ -726,7 +732,8 @@ const App: React.FC = () => {
 
   const deleteSession = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (isStreaming && id === currentSessionId) return; // Prevent deleting active stream
+    // Prevent deleting the specific session that is currently streaming
+    if (id === streamingSessionId) return; 
 
     const sessionToDelete = sessions.find(s => s.id === id);
     if (!sessionToDelete) return;
@@ -776,8 +783,8 @@ const App: React.FC = () => {
           <div className="text-xs font-bold text-gray-400 uppercase tracking-wider px-3 mb-2 mt-6">History</div>
           
           {sessions.map(session => {
-            // Check if THIS specific session is the one currently streaming
-            const isThisSessionStreaming = isStreaming && currentSessionId === session.id;
+            // Check if THIS specific session is the one currently streaming (regardless of view)
+            const isThisSessionStreaming = streamingSessionId === session.id;
 
             return (
             <div 
@@ -874,7 +881,8 @@ const App: React.FC = () => {
               const contentParts = msg.role === Role.Model ? parseMessageContent(msg.text) : null;
               
               // Only show "Waiting" animation if this is the active stream AND the last message
-              const isWaitingForFirstToken = isStreaming && currentSessionId === currentSession.id && msg.role === Role.Model && msg.text === '' && index === currentSession.messages.length - 1;
+              // AND we are looking at the session that is actually streaming
+              const isWaitingForFirstToken = isStreaming && streamingSessionId === currentSession.id && msg.role === Role.Model && msg.text === '' && index === currentSession.messages.length - 1;
               
               // Calculate if thinking is truncated
               // Logic: Has thought, but NOT complete, and we are NO LONGER streaming.
@@ -1037,7 +1045,7 @@ const App: React.FC = () => {
                  />
 
                  {/* Stop Button - ONLY active if we are viewing the streaming session */}
-                 {isStreaming && currentSessionId && sessions.find(s => s.id === currentSessionId)?.id === sessions.find(s => s.id === currentSessionId && isStreaming)?.id ? (
+                 {isStreaming && currentSessionId === streamingSessionId ? (
                    <button 
                      onClick={handleStopGeneration}
                      className="p-2 mb-1 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors animate-pulse flex-shrink-0"
@@ -1045,8 +1053,7 @@ const App: React.FC = () => {
                      <StopIcon />
                    </button>
                  ) : isStreaming ? (
-                   // If streaming but viewing another session, show disabled send icon or nothing? 
-                   // UI choice: Show disabled send to indicate global busy state
+                   // If streaming but viewing another session, show disabled send to indicate global busy state
                    <button 
                      disabled
                      className="p-2 mb-1 bg-gray-400 text-white rounded-full opacity-50 cursor-not-allowed flex-shrink-0"
