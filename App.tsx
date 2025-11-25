@@ -1,10 +1,11 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage, SessionStatus } from './types';
 import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig } from './services/geminiService';
-import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon } from './components/Icon';
+import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon, FinishedIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
 const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
@@ -251,7 +252,9 @@ const App: React.FC = () => {
 
   // 1. Current Session Polling (Fast: 3s)
   useEffect(() => {
-    if (!settings.contextCache || !currentSessionId || !isCustomServer(settings.serverUrl)) {
+    // Only poll if valid session AND it has messages (chat history exists)
+    const session = sessions.find(s => s.id === currentSessionId);
+    if (!settings.contextCache || !currentSessionId || !isCustomServer(settings.serverUrl) || !session || session.messages.length === 0) {
         setContextStats(null);
         return;
     }
@@ -290,6 +293,12 @@ const App: React.FC = () => {
             }
             usageFailuresRef.current = 0;
         } else {
+            // If API returns null (e.g. 404, session evicted/deleted), clear the status hint
+            setSessionStatuses(prev => {
+                const newStatuses = { ...prev };
+                delete newStatuses[currentSessionId];
+                return newStatuses;
+            });
             usageFailuresRef.current += 1;
         }
     };
@@ -297,7 +306,7 @@ const App: React.FC = () => {
     pollCurrent();
     const intervalId = setInterval(pollCurrent, 3000);
     return () => clearInterval(intervalId);
-  }, [currentSessionId, settings.contextCache, settings.serverUrl, isCustomServer]);
+  }, [currentSessionId, settings.contextCache, settings.serverUrl, isCustomServer, sessions]);
 
   // 2. Background Sessions Polling (Slow: 10s)
   useEffect(() => {
@@ -328,6 +337,13 @@ const App: React.FC = () => {
                 if (stats.total_swap_memory !== undefined) {
                     setSwapStats({ used: stats.swap_used || 0, total: stats.total_swap_memory });
                 }
+            } else {
+                // If API returns null (e.g. 404, session evicted/deleted), clear the status hint
+                setSessionStatuses(prev => {
+                    const newStatuses = { ...prev };
+                    delete newStatuses[session.id];
+                    return newStatuses;
+                });
             }
         }
     };
@@ -886,6 +902,7 @@ const App: React.FC = () => {
                         {sessionStatus === 'Waiting' && <WaitingIcon />}
                         {sessionStatus === 'Cached' && <CachedIcon />}
                         {sessionStatus === 'Swapped' && <SwappedIcon />}
+                        {sessionStatus === 'Finished' && <FinishedIcon />}
                     </>
                  )}
                  
@@ -1168,7 +1185,7 @@ const App: React.FC = () => {
                                 {contextStats.status === 'Waiting' && <WaitingIcon />}
                                 {contextStats.status === 'Cached' && <CachedIcon />}
                                 {contextStats.status === 'Swapped' && <SwappedIcon />}
-                                {contextStats.status === 'Finished' && <span className="w-2 h-2 rounded-full bg-gray-400" />}
+                                {contextStats.status === 'Finished' && <FinishedIcon />}
                             </div>
                         )}
 
