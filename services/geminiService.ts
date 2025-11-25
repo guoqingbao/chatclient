@@ -1,4 +1,3 @@
-
 import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
 
 // Helper to prepare messages for OpenAI format
@@ -199,22 +198,41 @@ export const streamChatResponse = async (
     });
 
     if (!response.ok) {
-      // Try to parse error message
-      let errorMsg = `API Request Failed (${response.status})`;
+      // Try to parse error message more robustly
+      let errorDetail = "";
+      
       try {
         const errorData = await response.json();
+        // Handle various error formats
+        // 1. OpenAI format: { error: { message: "..." } }
         if (errorData.error && errorData.error.message) {
-           errorMsg += `: ${errorData.error.message}`;
+           errorDetail = errorData.error.message;
+        } 
+        // 2. Generic message: { message: "..." }
+        else if (errorData.message) {
+           errorDetail = errorData.message;
+        }
+        // 3. Python/FastAPI detail: { detail: "..." }
+        else if (errorData.detail) {
+           errorDetail = typeof errorData.detail === 'string' ? errorData.detail : JSON.stringify(errorData.detail);
+        }
+        // 4. Fallback: stringify whole object
+        else {
+           errorDetail = JSON.stringify(errorData);
         }
       } catch (e) {
          // Raw text?
          const text = await response.text();
-         if (text) errorMsg += `: ${text.slice(0, 100)}`;
+         if (text) errorDetail = text.slice(0, 300); // Capture more context
       }
       
-      // Hint for common 404
-      if (response.status === 404) {
-          errorMsg += ". Check API settings.";
+      let errorMsg = `Server Error (${response.status})`;
+      if (errorDetail) {
+          errorMsg += `: ${errorDetail}`;
+      } else if (response.status === 404) {
+          errorMsg += ": Endpoint not found. Check Server URL.";
+      } else if (response.status === 401) {
+          errorMsg += ": Unauthorized. Check API Key.";
       }
 
       throw new Error(errorMsg);

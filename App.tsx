@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
@@ -592,8 +591,15 @@ const App: React.FC = () => {
                   const msgs = [...s.messages];
                   const lastMsg = msgs[msgs.length - 1];
                   if (lastMsg) {
-                    lastMsg.text = bufferedText; // Flush buffer
-                    lastMsg.text = `Error: ${error.message || "Failed to generate response"}. Check API settings.`;
+                    // Flush buffer first, then append error
+                    const existingContent = bufferedText || lastMsg.text;
+                    const errorContent = `**Error:** ${error.message || "Failed to generate response"}`;
+                    
+                    if (existingContent) {
+                        lastMsg.text = `${existingContent}\n\n${errorContent}`;
+                    } else {
+                        lastMsg.text = errorContent;
+                    }
                     lastMsg.isError = true;
                   }
                   return { ...s, messages: msgs };
