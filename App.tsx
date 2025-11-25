@@ -248,65 +248,94 @@ const App: React.FC = () => {
     return false;
   }, []);
 
-  // Token Usage Polling
+  // --- POLLING LOGIC ---
+
+  // 1. Current Session Polling (Fast: 3s)
   useEffect(() => {
-    // Only poll if context cache is enabled AND we are connected to a custom server
     if (!settings.contextCache || !currentSessionId || !isCustomServer(settings.serverUrl)) {
         setContextStats(null);
-        // We do NOT clear kvStats/swapStats here, as they might be relevant across sessions
         return;
     }
     
     usageFailuresRef.current = 0;
     
-    const pollUsage = async () => {
+    const pollCurrent = async () => {
         if (usageFailuresRef.current > 5) return;
         
-        // Use the ID from closure if needed, but safer to pass explicit
         const stats = await fetchTokenUsage(currentSessionId, settings);
         
         if (stats) {
-            // Update Context Stats (Session Specific)
+            // Update Context Stats
             setContextStats({
                 used: stats.token_used,
                 total: stats.max_model_len,
                 status: stats.session_status
             });
 
-            // Update KV Stats (Global)
+            // Update Global Stats (if present)
             if (stats.total_kv_cache_tokens) {
                 setKvStats({
                     used: stats.used_kvcache_tokens,
                     total: stats.total_kv_cache_tokens
                 });
             }
-
-            // Update Swap Stats (Global)
             if (stats.total_swap_memory !== undefined && stats.swap_used !== undefined) {
                 setSwapStats({
                     used: stats.swap_used,
                     total: stats.total_swap_memory
                 });
             }
-
-            // Update Session Status Map (Runtime only)
+            // Update current session status in map
             if (stats.session_status) {
-                setSessionStatuses(prev => ({
-                    ...prev,
-                    [currentSessionId]: stats.session_status!
-                }));
+                setSessionStatuses(prev => ({ ...prev, [currentSessionId]: stats.session_status! }));
             }
-
             usageFailuresRef.current = 0;
         } else {
             usageFailuresRef.current += 1;
         }
     };
     
-    pollUsage();
-    const intervalId = setInterval(pollUsage, 3000);
+    pollCurrent();
+    const intervalId = setInterval(pollCurrent, 3000);
     return () => clearInterval(intervalId);
   }, [currentSessionId, settings.contextCache, settings.serverUrl, isCustomServer]);
+
+  // 2. Background Sessions Polling (Slow: 10s)
+  useEffect(() => {
+    if (!settings.contextCache || !isCustomServer(settings.serverUrl)) return;
+
+    const pollBackground = async () => {
+        // Filter sessions that have messages (active ID) and are NOT the current one (already polled fast)
+        const backgroundSessions = sessions.filter(s => 
+            s.messages.length > 0 && s.id !== currentSessionId
+        );
+
+        // Limit concurrency: poll sequentially to avoid flooding
+        for (const session of backgroundSessions) {
+            const stats = await fetchTokenUsage(session.id, settings);
+            if (stats) {
+                // Update session status map
+                if (stats.session_status) {
+                    setSessionStatuses(prev => ({
+                        ...prev,
+                        [session.id]: stats.session_status!
+                    }));
+                }
+                
+                // Also update global stats from ANY successful hit
+                if (stats.total_kv_cache_tokens) {
+                     setKvStats({ used: stats.used_kvcache_tokens, total: stats.total_kv_cache_tokens });
+                }
+                if (stats.total_swap_memory !== undefined) {
+                    setSwapStats({ used: stats.swap_used || 0, total: stats.total_swap_memory });
+                }
+            }
+        }
+    };
+
+    const intervalId = setInterval(pollBackground, 10000);
+    return () => clearInterval(intervalId);
+  }, [sessions, currentSessionId, settings.contextCache, settings.serverUrl, isCustomServer]);
 
 
   useEffect(() => {
@@ -499,6 +528,19 @@ const App: React.FC = () => {
           bufferedText = chunkText;
         }
       );
+      
+      // FINAL FLUSH: Ensure the very last chunk is rendered even if rAF stops
+      setSessions(prev => prev.map(s => {
+          if (s.id === sessionId) {
+            const msgs = [...s.messages];
+            const lastMsg = msgs[msgs.length - 1];
+            if (lastMsg && lastMsg.role === Role.Model) {
+                lastMsg.text = bufferedText;
+            }
+            return { ...s, messages: msgs };
+          }
+          return s;
+      }));
 
       // Handle Title Generation (only if it's the first exchange)
       if (historyMessages.length === 0) {

@@ -234,6 +234,7 @@ export const streamChatResponse = async (
     const decoder = new TextDecoder("utf-8");
     let done = false;
     let accumulatedText = "";
+    let buffer = ""; // Buffer for split chunks
 
     while (!done) {
       // Double check before reading
@@ -246,29 +247,39 @@ export const streamChatResponse = async (
         done = readerDone;
         
         if (value) {
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
+            // Append new data to buffer
+            buffer += decoder.decode(value, { stream: true });
+            
+            // Split by newline
+            const lines = buffer.split('\n');
+            
+            // Keep the last segment in the buffer (it might be incomplete)
+            // If the chunk ended with \n, the last element will be empty string, which is fine
+            buffer = lines.pop() || "";
             
             for (const line of lines) {
-            if (line.trim() === '') continue;
-            if (line.trim() === 'data: [DONE]') continue;
-            
-            if (line.startsWith('data: ')) {
-                try {
-                const jsonStr = line.replace('data: ', '');
-                const json = JSON.parse(jsonStr);
-                
-                if (json.choices && json.choices.length > 0) {
-                    const delta = json.choices[0].delta;
-                    if (delta.content) {
-                    accumulatedText += delta.content;
-                    onChunk(accumulatedText);
+              const trimmedLine = line.trim();
+              if (trimmedLine === '') continue;
+              if (trimmedLine === 'data: [DONE]') continue;
+              
+              if (trimmedLine.startsWith('data: ')) {
+                  try {
+                    const jsonStr = trimmedLine.replace('data: ', '');
+                    const json = JSON.parse(jsonStr);
+                    
+                    if (json.choices && json.choices.length > 0) {
+                        const delta = json.choices[0].delta;
+                        if (delta.content) {
+                          accumulatedText += delta.content;
+                          onChunk(accumulatedText);
+                        }
                     }
-                }
-                } catch (e) {
-                // Ignore parse errors for partial chunks
-                }
-            }
+                  } catch (e) {
+                    // JSON parse error usually means packet split (should be handled by buffer now)
+                    // But if it happens, we ignore just this line to prevent crashing
+                    console.debug("Skipping malformed JSON line", e);
+                  }
+              }
             }
         }
       } catch (readError: any) {
