@@ -775,28 +775,31 @@ const App: React.FC = () => {
 
           <div className="text-xs font-bold text-gray-400 uppercase tracking-wider px-3 mb-2 mt-6">History</div>
           
-          {sessions.map(session => (
+          {sessions.map(session => {
+            // Check if THIS specific session is the one currently streaming
+            const isThisSessionStreaming = isStreaming && currentSessionId === session.id;
+
+            return (
             <div 
               key={session.id}
               onClick={() => {
-                  if (!isStreaming) {
-                      setCurrentSessionId(session.id);
-                      setContextStats(null); // Clear context stats when switching, will re-poll
-                  }
+                  setCurrentSessionId(session.id);
+                  setContextStats(null); // Clear context stats when switching, will re-poll
               }}
-              className={`group relative flex items-center px-3 py-2.5 text-sm rounded-lg transition-all ${
+              className={`group relative flex items-center px-3 py-2.5 text-sm rounded-lg transition-all cursor-pointer ${
                 currentSessionId === session.id 
                   ? 'bg-gray-200 dark:bg-dark-800 text-gray-900 dark:text-white font-medium shadow-sm' 
                   : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-dark-800'
-              } ${isStreaming ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+              }`}
             >
               <span className="truncate flex-1 pr-6">{session.title}</span>
-              {currentSessionId === session.id && isStreaming && (
+              {isThisSessionStreaming && (
                  <div className="absolute right-2 text-indigo-500">
                     <WritingIcon />
                  </div>
               )}
-              {!isStreaming && (
+              {/* Only show delete if NOT streaming this specific session */}
+              {!isThisSessionStreaming && (
                 <button 
                   onClick={(e) => deleteSession(e, session.id)}
                   className="absolute right-2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity"
@@ -805,7 +808,7 @@ const App: React.FC = () => {
                 </button>
               )}
             </div>
-          ))}
+          )})}
         </div>
 
         <div className="p-4 border-t border-gray-200 dark:border-dark-800 space-y-1">
@@ -869,7 +872,9 @@ const App: React.FC = () => {
           ) : (
             currentSession.messages.map((msg, index) => {
               const contentParts = msg.role === Role.Model ? parseMessageContent(msg.text) : null;
-              const isWaitingForFirstToken = msg.role === Role.Model && msg.text === '' && isStreaming && index === currentSession.messages.length - 1;
+              
+              // Only show "Waiting" animation if this is the active stream AND the last message
+              const isWaitingForFirstToken = isStreaming && currentSessionId === currentSession.id && msg.role === Role.Model && msg.text === '' && index === currentSession.messages.length - 1;
               
               // Calculate if thinking is truncated
               // Logic: Has thought, but NOT complete, and we are NO LONGER streaming.
@@ -1031,12 +1036,22 @@ const App: React.FC = () => {
                     rows={1}
                  />
 
-                 {isStreaming ? (
+                 {/* Stop Button - ONLY active if we are viewing the streaming session */}
+                 {isStreaming && currentSessionId && sessions.find(s => s.id === currentSessionId)?.id === sessions.find(s => s.id === currentSessionId && isStreaming)?.id ? (
                    <button 
                      onClick={handleStopGeneration}
                      className="p-2 mb-1 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors animate-pulse flex-shrink-0"
                    >
                      <StopIcon />
+                   </button>
+                 ) : isStreaming ? (
+                   // If streaming but viewing another session, show disabled send icon or nothing? 
+                   // UI choice: Show disabled send to indicate global busy state
+                   <button 
+                     disabled
+                     className="p-2 mb-1 bg-gray-400 text-white rounded-full opacity-50 cursor-not-allowed flex-shrink-0"
+                   >
+                     <SendIcon />
                    </button>
                  ) : (
                    <button 
