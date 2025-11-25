@@ -1,10 +1,11 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage } from './types';
+import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage, SessionStatus } from './types';
 import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig } from './services/geminiService';
-import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon } from './components/Icon';
+import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
 const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
@@ -145,9 +146,15 @@ const App: React.FC = () => {
   const [editingMessage, setEditingMessage] = useState<{index: number, text: string} | null>(null);
 
   // Token Usage State (Split)
-  const [contextStats, setContextStats] = useState<{used: number, total: number} | null>(null);
+  const [contextStats, setContextStats] = useState<{used: number, total: number, status?: SessionStatus} | null>(null);
   const [kvStats, setKvStats] = useState<{used: number, total: number} | null>(null);
   const [swapStats, setSwapStats] = useState<{used: number, total: number} | null>(null);
+
+  // Map to store latest status of each session for sidebar hints
+  const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionStatus>>(() => {
+     const stored = localStorage.getItem('chat_client_statuses');
+     return stored ? JSON.parse(stored) : {};
+  });
 
   // Ref to track usage polling failures to auto-kill the thread
   const usageFailuresRef = useRef(0);
@@ -222,6 +229,10 @@ const App: React.FC = () => {
     localStorage.setItem('chat_client_settings', JSON.stringify(settings));
   }, [settings]);
 
+  useEffect(() => {
+    localStorage.setItem('chat_client_statuses', JSON.stringify(sessionStatuses));
+  }, [sessionStatuses]);
+
   // Helper to check if server is a custom server (Local/IP/Port)
   const isCustomServer = useCallback((url: string) => {
     if (!url) return false;
@@ -263,7 +274,8 @@ const App: React.FC = () => {
             // Update Context Stats (Session Specific)
             setContextStats({
                 used: stats.token_used,
-                total: stats.max_model_len
+                total: stats.max_model_len,
+                status: stats.session_status
             });
 
             // Update KV Stats (Global)
@@ -280,6 +292,14 @@ const App: React.FC = () => {
                     used: stats.swap_used,
                     total: stats.total_swap_memory
                 });
+            }
+
+            // Update Session Status Map
+            if (stats.session_status) {
+                setSessionStatuses(prev => ({
+                    ...prev,
+                    [currentSessionId]: stats.session_status!
+                }));
             }
 
             usageFailuresRef.current = 0;
@@ -418,6 +438,9 @@ const App: React.FC = () => {
   ) => {
     setIsStreaming(true);
     setStreamingSessionId(sessionId); // Track active stream ID
+
+    // Optimistically update status to Running locally
+    setSessionStatuses(prev => ({ ...prev, [sessionId]: 'Running' }));
 
     shouldAutoScrollRef.current = true; // Force scroll to bottom on start
     abortControllerRef.current = new AbortController();
@@ -794,6 +817,8 @@ const App: React.FC = () => {
           {sessions.map(session => {
             // Check if THIS specific session is the one currently streaming (regardless of view)
             const isThisSessionStreaming = streamingSessionId === session.id;
+            // Get last known status for hints
+            const sessionStatus = sessionStatuses[session.id];
 
             return (
             <div 
@@ -809,20 +834,27 @@ const App: React.FC = () => {
               }`}
             >
               <span className="truncate flex-1 pr-6">{session.title}</span>
-              {isThisSessionStreaming && (
-                 <div className="absolute right-2 text-indigo-500">
-                    <WritingIcon />
-                 </div>
-              )}
-              {/* Only show delete if NOT streaming this specific session */}
-              {!isThisSessionStreaming && (
-                <button 
-                  onClick={(e) => deleteSession(e, session.id)}
-                  className="absolute right-2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity"
-                >
-                  ×
-                </button>
-              )}
+              <div className="absolute right-2 flex items-center gap-1">
+                 {/* Sidebar Status Indicators */}
+                 {isThisSessionStreaming ? (
+                    <div className="text-indigo-500"><WritingIcon /></div>
+                 ) : (
+                    <>
+                        {sessionStatus === 'Cached' && <CachedIcon />}
+                        {sessionStatus === 'Swapped' && <SwappedIcon />}
+                    </>
+                 )}
+                 
+                 {/* Only show delete if NOT streaming this specific session */}
+                 {!isThisSessionStreaming && (
+                    <button 
+                      onClick={(e) => deleteSession(e, session.id)}
+                      className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity ml-1"
+                    >
+                      ×
+                    </button>
+                 )}
+              </div>
             </div>
           )})}
         </div>
@@ -1084,6 +1116,17 @@ const App: React.FC = () => {
                  {/* Footer Token Indicator */}
                  {settings.contextCache && (contextStats || kvStats || swapStats) && (
                     <div className="flex items-center gap-3 px-3 py-1 rounded-full bg-gray-100 dark:bg-dark-900 border border-gray-200 dark:border-dark-800 text-[10px] font-mono text-gray-500 dark:text-gray-400 animate-in fade-in slide-in-from-bottom-2">
+                        
+                        {/* Session Status Indicator (Footer) */}
+                        {contextStats?.status && (
+                            <div className="flex items-center pr-1" title={`Session Status: ${contextStats.status}`}>
+                                {contextStats.status === 'Running' && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />}
+                                {contextStats.status === 'Cached' && <CachedIcon />}
+                                {contextStats.status === 'Swapped' && <SwappedIcon />}
+                                {contextStats.status === 'Finished' && <span className="w-2 h-2 rounded-full bg-gray-400" />}
+                            </div>
+                        )}
+
                         {/* Context Usage - Only show if session has data */}
                         {contextStats && (
                             <div className="flex items-center gap-1.5" title="Context Window Usage">

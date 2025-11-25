@@ -1,3 +1,4 @@
+
 import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
 
 // Helper to prepare messages for OpenAI format
@@ -137,7 +138,8 @@ export const fetchTokenUsage = async (
           used_kvcache_tokens: data.used_kvcache_tokens || 0,
           total_kv_cache_tokens: data.total_kv_cache_tokens,
           swap_used: data.swap_used,
-          total_swap_memory: data.total_swap_memory
+          total_swap_memory: data.total_swap_memory,
+          session_status: data.session_status // Capture session status
       } as TokenUsage;
     }
     return null;

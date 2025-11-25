@@ -4,6 +4,8 @@ export enum Role {
   Model = 'model',
 }
 
+export type SessionStatus = 'Running' | 'Cached' | 'Swapped' | 'Finished';
+
 export interface FileAttachment {
   name: string;
   type: string;
@@ -34,6 +36,7 @@ export interface TokenUsage {
   total_kv_cache_tokens?: number;
   swap_used?: number;
   total_swap_memory?: number;
+  session_status?: SessionStatus;
 }
 
 export interface ServerConfig {
