@@ -156,6 +156,9 @@ const App: React.FC = () => {
   // Ref to track usage polling failures to auto-kill the thread
   const usageFailuresRef = useRef(0);
   
+  // Keep a ref of sessions for the polling interval to read without triggering re-renders
+  const sessionsRef = useRef(sessions);
+  
   // Scroll & UI Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -217,6 +220,9 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Sync ref for polling
+    sessionsRef.current = sessions;
+
     if (sessions.length > 0) {
       localStorage.setItem('chat_client_sessions', JSON.stringify(sessions));
     }
@@ -252,9 +258,8 @@ const App: React.FC = () => {
 
   // 1. Current Session Polling (Fast: 3s)
   useEffect(() => {
-    // Only poll if valid session AND it has messages (chat history exists)
-    const session = sessions.find(s => s.id === currentSessionId);
-    if (!settings.contextCache || !currentSessionId || !isCustomServer(settings.serverUrl) || !session || session.messages.length === 0) {
+    // We do NOT depend on `sessions` here to avoid resetting the interval on every token generation
+    if (!settings.contextCache || !currentSessionId || !isCustomServer(settings.serverUrl)) {
         setContextStats(null);
         return;
     }
@@ -263,6 +268,13 @@ const App: React.FC = () => {
     
     const pollCurrent = async () => {
         if (usageFailuresRef.current > 5) return;
+        
+        // Use Ref to get latest sessions without re-triggering effect
+        const currentSessions = sessionsRef.current;
+        const session = currentSessions.find(s => s.id === currentSessionId);
+        
+        // Skip polling if session missing or empty
+        if (!session || session.messages.length === 0) return;
         
         const stats = await fetchTokenUsage(currentSessionId, settings);
         
@@ -306,15 +318,18 @@ const App: React.FC = () => {
     pollCurrent();
     const intervalId = setInterval(pollCurrent, 3000);
     return () => clearInterval(intervalId);
-  }, [currentSessionId, settings.contextCache, settings.serverUrl, isCustomServer, sessions]);
+  }, [currentSessionId, settings.contextCache, settings.serverUrl, isCustomServer]); // Removed sessions dependency
 
   // 2. Background Sessions Polling (Slow: 10s)
   useEffect(() => {
     if (!settings.contextCache || !isCustomServer(settings.serverUrl)) return;
 
     const pollBackground = async () => {
+        // Use Ref to get latest sessions
+        const currentSessions = sessionsRef.current;
+
         // Filter sessions that have messages (active ID) and are NOT the current one (already polled fast)
-        const backgroundSessions = sessions.filter(s => 
+        const backgroundSessions = currentSessions.filter(s => 
             s.messages.length > 0 && s.id !== currentSessionId
         );
 
@@ -350,7 +365,7 @@ const App: React.FC = () => {
 
     const intervalId = setInterval(pollBackground, 10000);
     return () => clearInterval(intervalId);
-  }, [sessions, currentSessionId, settings.contextCache, settings.serverUrl, isCustomServer]);
+  }, [currentSessionId, settings.contextCache, settings.serverUrl, isCustomServer]); // Removed sessions dependency
 
 
   useEffect(() => {
