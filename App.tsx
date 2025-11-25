@@ -147,6 +147,7 @@ const App: React.FC = () => {
   // Token Usage State (Split)
   const [contextStats, setContextStats] = useState<{used: number, total: number} | null>(null);
   const [kvStats, setKvStats] = useState<{used: number, total: number} | null>(null);
+  const [swapStats, setSwapStats] = useState<{used: number, total: number} | null>(null);
 
   // Ref to track usage polling failures to auto-kill the thread
   const usageFailuresRef = useRef(0);
@@ -246,7 +247,7 @@ const App: React.FC = () => {
     // Only poll if context cache is enabled AND we are connected to a custom server
     if (!settings.contextCache || !currentSessionId || !isCustomServer(settings.serverUrl)) {
         setContextStats(null);
-        // We do NOT clear kvStats here, as it might be relevant across sessions
+        // We do NOT clear kvStats/swapStats here, as they might be relevant across sessions
         return;
     }
     
@@ -270,6 +271,14 @@ const App: React.FC = () => {
                 setKvStats({
                     used: stats.used_kvcache_tokens,
                     total: stats.total_kv_cache_tokens
+                });
+            }
+
+            // Update Swap Stats (Global)
+            if (stats.total_swap_memory !== undefined && stats.swap_used !== undefined) {
+                setSwapStats({
+                    used: stats.swap_used,
+                    total: stats.total_swap_memory
                 });
             }
 
@@ -338,7 +347,7 @@ const App: React.FC = () => {
     setCurrentSessionId(newSession.id);
     
     setContextStats(null); // Reset session-specific stats
-    // KV Stats are preserved globally
+    // KV Stats & Swap Stats are preserved globally
 
     usageFailuresRef.current = 0; // Reset polling check
     shouldAutoScrollRef.current = true; // Reset scroll lock
@@ -1073,7 +1082,7 @@ const App: React.FC = () => {
               
               <div className="flex flex-col items-center mt-3 gap-1">
                  {/* Footer Token Indicator */}
-                 {settings.contextCache && (contextStats || kvStats) && (
+                 {settings.contextCache && (contextStats || kvStats || swapStats) && (
                     <div className="flex items-center gap-3 px-3 py-1 rounded-full bg-gray-100 dark:bg-dark-900 border border-gray-200 dark:border-dark-800 text-[10px] font-mono text-gray-500 dark:text-gray-400 animate-in fade-in slide-in-from-bottom-2">
                         {/* Context Usage - Only show if session has data */}
                         {contextStats && (
@@ -1083,7 +1092,7 @@ const App: React.FC = () => {
                             </div>
                         )}
                         
-                        {contextStats && kvStats && (
+                        {contextStats && (kvStats || swapStats) && (
                             <div className="w-px h-3 bg-gray-300 dark:bg-dark-700"></div>
                         )}
 
@@ -1093,6 +1102,17 @@ const App: React.FC = () => {
                                <span className={`w-1.5 h-1.5 rounded-full ${kvStats.used > kvStats.total * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span>
                                <span>KV: {kvStats.used.toLocaleString()} / {kvStats.total.toLocaleString()}</span>
                             </div>
+                        )}
+
+                        {/* Swap Usage - Global */}
+                        {swapStats && swapStats.total >= 0.2 && (
+                            <>
+                                <div className="w-px h-3 bg-gray-300 dark:bg-dark-700"></div>
+                                <div className="flex items-center gap-1.5" title="Swap Memory Usage">
+                                   <span className={`w-1.5 h-1.5 rounded-full ${swapStats.used > swapStats.total * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                                   <span>Swap: {swapStats.used.toFixed(1)} / {swapStats.total.toFixed(1)} GB</span>
+                                </div>
+                            </>
                         )}
                     </div>
                  )}

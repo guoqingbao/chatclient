@@ -134,8 +134,10 @@ export const fetchTokenUsage = async (
       return {
           token_used: data.token_used,
           max_model_len: data.max_model_len,
-          used_kvcache_tokens: data.used_kvcache_tokens || 0, // Fallback
-          total_kv_cache_tokens: data.total_kv_cache_tokens
+          used_kvcache_tokens: data.used_kvcache_tokens || 0,
+          total_kv_cache_tokens: data.total_kv_cache_tokens,
+          swap_used: data.swap_used,
+          total_swap_memory: data.total_swap_memory
       } as TokenUsage;
     }
     return null;

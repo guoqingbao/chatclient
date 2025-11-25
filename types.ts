@@ -32,6 +32,8 @@ export interface TokenUsage {
   max_model_len: number;
   used_kvcache_tokens: number;
   total_kv_cache_tokens?: number;
+  swap_used?: number;
+  total_swap_memory?: number;
 }
 
 export interface ServerConfig {
