@@ -11,7 +11,21 @@ import SettingsModal from './components/SettingsModal';
 const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
   const [isOpen, setIsOpen] = useState(!isComplete || isTruncated);
 
-  // Auto-close when complete (unless it was truncated, then we might want to keep it open to show the error)
+  // If the thought content was moved to main text (indicated by isTruncated=true AND empty thought),
+  // we render a static warning banner instead of the collapsible widget.
+  if (isTruncated && !thought) {
+      return (
+          <div className="mb-4 p-3 border-l-4 border-amber-400 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-600 rounded-r-md text-sm text-amber-800 dark:text-amber-200 flex items-start gap-3 shadow-sm animate-in fade-in slide-in-from-top-1">
+             <span className="text-lg leading-none mt-0.5">⚠️</span>
+             <div className="flex flex-col">
+                 <span className="font-semibold">Thinking Process Truncated</span>
+                 <span className="text-xs opacity-90">The thought process was interrupted. The partial content has been displayed below.</span>
+             </div>
+          </div>
+      );
+  }
+
+  // Auto-close when complete (unless it was truncated but content kept, then we might want to keep it open)
   useEffect(() => {
     if (isComplete && !isTruncated) {
       setIsOpen(false);
@@ -1053,6 +1067,15 @@ const App: React.FC = () => {
               
               // Calculate if thinking is truncated
               const isThinkingTruncated = contentParts && contentParts.hasThought && !contentParts.isComplete && !isStreaming;
+              
+              let thoughtDisplay = contentParts?.thought || "";
+              let mainContentDisplay = contentParts ? contentParts.mainContent : msg.text;
+
+              // If truncated, move thought to main content and clear from widget
+              if (isThinkingTruncated) {
+                  mainContentDisplay = (contentParts?.thought || "") + "\n\n" + mainContentDisplay;
+                  thoughtDisplay = ""; 
+              }
 
               return (
               <div key={msg.id} className={`flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}>
@@ -1115,13 +1138,13 @@ const App: React.FC = () => {
                            )}
                            {contentParts && contentParts.hasThought && (
                              <ThinkingProcess 
-                                thought={contentParts.thought} 
+                                thought={thoughtDisplay}
                                 isComplete={contentParts.isComplete}
                                 isTruncated={!!isThinkingTruncated}
                              />
                            )}
                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                             {contentParts ? contentParts.mainContent : msg.text}
+                             {mainContentDisplay}
                            </ReactMarkdown>
                         </div>
                      ) : (
