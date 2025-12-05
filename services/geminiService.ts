@@ -1,4 +1,3 @@
-
 import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
 
 // Helper to determine if a message contains multimodal content
@@ -12,10 +11,16 @@ const isMultimodalMessage = (text: string, attachments: FileAttachment[]): boole
 // Helper to remove thinking content from text
 const removeThinkingContent = (text: string): string => {
   if (!text) return "";
+  let cleaned = text;
   // Remove XML style <think>...</think>
-  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
   // Remove Bracket style [THINK]...[/THINK]
   cleaned = cleaned.replace(/\[THINK\][\s\S]*?\[\/THINK\]/gi, '');
+  
+  // Remove unclosed tags at the very end of the string (truncated thoughts)
+  cleaned = cleaned.replace(/<think>[\s\S]*$/i, '');
+  cleaned = cleaned.replace(/\[THINK\][\s\S]*$/i, '');
+  
   return cleaned.trim();
 };
 
