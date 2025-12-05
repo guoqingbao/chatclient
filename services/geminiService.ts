@@ -9,6 +9,16 @@ const isMultimodalMessage = (text: string, attachments: FileAttachment[]): boole
   return hasImageAttachments || hasImageUrls;
 };
 
+// Helper to remove thinking content from text
+const removeThinkingContent = (text: string): string => {
+  if (!text) return "";
+  // Remove XML style <think>...</think>
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  // Remove Bracket style [THINK]...[/THINK]
+  cleaned = cleaned.replace(/\[THINK\][\s\S]*?\[\/THINK\]/gi, '');
+  return cleaned.trim();
+};
+
 // Helper to prepare messages for OpenAI format, supporting Multimodal (Rust Backend)
 const prepareMessages = (
   history: Message[], 
@@ -28,9 +38,14 @@ const prepareMessages = (
   history.forEach(msg => {
     if (msg.isError) return;
     
+    // CLEANING: If it's a model message, strip the thinking process
+    // We do not modify the original msg object in history, just the text used here.
+    const rawText = msg.text;
+    const processedText = msg.role === Role.Model ? removeThinkingContent(rawText) : rawText;
+
     // Check if this historic message has images
     const hasImages = msg.attachments && msg.attachments.some(a => a.type.startsWith('image/'));
-    const shouldUseMultimodal = isMultimodalSupported && (hasImages || isMultimodalMessage(msg.text, msg.attachments || []));
+    const shouldUseMultimodal = isMultimodalSupported && (hasImages || isMultimodalMessage(processedText, msg.attachments || []));
 
     if (shouldUseMultimodal) {
         const contentParts: any[] = [];
@@ -63,8 +78,8 @@ const prepareMessages = (
             });
         }
 
-        // Add User Text (Split by Image URLs if present)
-        const text = msg.text;
+        // Add Text (Split by Image URLs if present)
+        const text = processedText;
         // Regex to find image URLs
         const urlRegex = /(\bhttps?:\/\/\S+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff)\b)/gi;
         const parts = text.split(urlRegex);
@@ -99,7 +114,7 @@ const prepareMessages = (
 
     } else {
         // STANDARD TEXT ONLY MODE
-        let content = msg.text;
+        let content = processedText;
         
         // Re-inject file context if it exists in history
         if (msg.attachments && msg.attachments.length > 0) {
@@ -107,7 +122,7 @@ const prepareMessages = (
             `\n--- START FILE: ${f.name} ---\n${f.content}\n--- END FILE ---\n`
           ).join('');
           if (fileContext) {
-             content = `[Context Files Uploaded]\n${fileContext}\n\n${msg.text}`;
+             content = `[Context Files Uploaded]\n${fileContext}\n\n${processedText}`;
           }
         }
 
