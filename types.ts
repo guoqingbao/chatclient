@@ -80,7 +80,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   topK: 0, 
   topP: 0.95,
   maxOutputTokens: 32768,
-  systemInstruction: 'You are a helpful, coding-expert AI assistant. Use Markdown for formatting.',
+  systemInstruction: 'You are a helpful, versatile AI assistant with broad expertise. Use Markdown for formatting.',
   language: 'en',
   theme: 'light',
   serverUrl: 'http://localhost:8000/v1/', 
