@@ -481,14 +481,22 @@ const App: React.FC = () => {
   };
 
   const parseMessageContent = (text: string) => {
-    const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/;
-    const match = text.match(thinkRegex);
-
-    if (match) {
-      const thoughtContent = match[1];
+    // Check for standard XML style <think>...</think>
+    const xmlMatch = text.match(/<think>([\s\S]*?)(?:<\/think>|$)/);
+    if (xmlMatch) {
+      const thoughtContent = xmlMatch[1];
       const isComplete = text.includes('</think>');
-      const mainContent = text.replace(match[0], '').trim();
+      const mainContent = text.replace(xmlMatch[0], '').trim();
       return { hasThought: true, thought: thoughtContent, isComplete, mainContent };
+    }
+
+    // Check for Bracket style [THINK]...[/THINK]
+    const bracketMatch = text.match(/\[THINK\]([\s\S]*?)(?:\[\/THINK\]|$)/i); // Case insensitive for robustness
+    if (bracketMatch) {
+        const thoughtContent = bracketMatch[1];
+        const isComplete = text.includes('[/THINK]') || text.includes('[/think]'); // Check for both cases
+        const mainContent = text.replace(bracketMatch[0], '').trim();
+        return { hasThought: true, thought: thoughtContent, isComplete, mainContent };
     }
     
     return { hasThought: false, thought: '', isComplete: true, mainContent: text };
@@ -610,7 +618,13 @@ const App: React.FC = () => {
                 // Ensure we capture whatever was in buffer before stopping
                 lastMsg.text = bufferedText; 
                 
-                const isInThinking = lastMsg.text.includes('<think>') && !lastMsg.text.includes('</think>');
+                // Detect incomplete thinking
+                const hasXmlStart = lastMsg.text.includes('<think>');
+                const hasXmlEnd = lastMsg.text.includes('</think>');
+                const hasBracketStart = lastMsg.text.includes('[THINK]');
+                const hasBracketEnd = lastMsg.text.includes('[/THINK]') || lastMsg.text.includes('[/think]');
+
+                const isInThinking = (hasXmlStart && !hasXmlEnd) || (hasBracketStart && !hasBracketEnd);
                 const alreadyStopped = lastMsg.text.endsWith('[Stopped]') || lastMsg.text.endsWith('_⛔ Generation stopped by user_');
 
                 if (!alreadyStopped) {
