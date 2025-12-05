@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { AppSettings } from '../types';
 import { RefreshIcon } from './Icon';
@@ -8,11 +9,6 @@ interface SettingsModalProps {
   settings: AppSettings;
   onSettingsChange: (newSettings: AppSettings) => void;
 }
-
-// Only "default" is needed as a fallback; real models come from the API.
-const DEFAULT_MODELS = [
-  "default"
-];
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings, onSettingsChange }) => {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -37,7 +33,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
       baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
       const url = `${baseUrl}/models`;
 
-      console.log(`[Settings] Fetching models from: ${url}`);
+      // console.log(`[Settings] Fetching models from: ${url}`);
 
       const headers: Record<string, string> = {};
       if (settings.apiKey) {
@@ -58,6 +54,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
       if (data && Array.isArray(data.data)) {
         const modelIds = data.data.map((m: any) => m.id);
         setAvailableModels(modelIds);
+        
+        // Auto-select first model if current is 'default' (placeholder) or not in the list
+        if (modelIds.length > 0) {
+           if (settings.model === 'default' || !modelIds.includes(settings.model)) {
+               onSettingsChange({ ...settings, model: modelIds[0] });
+           }
+        }
       } else {
         throw new Error("Invalid JSON format received from server");
       }
@@ -77,7 +80,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
 
   const modelOptions = Array.from(new Set([
     ...availableModels, 
-    ...DEFAULT_MODELS, 
     settings.model
   ])).filter(Boolean);
 
