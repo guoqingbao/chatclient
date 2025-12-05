@@ -10,6 +10,16 @@ import SettingsModal from './components/SettingsModal';
 const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
   const [isOpen, setIsOpen] = useState(!isComplete || isTruncated);
 
+  // Auto-close when complete (unless it was truncated but content kept, then we might want to keep it open)
+  // MOVED UP: Hooks must be before conditional returns
+  useEffect(() => {
+    if (isComplete && !isTruncated) {
+      setIsOpen(false);
+    } else if (!isComplete && !isTruncated) {
+      setIsOpen(true);
+    }
+  }, [isComplete, isTruncated]);
+
   // If the thought content was moved to main text (indicated by isTruncated=true AND empty thought),
   // we render a static warning banner instead of the collapsible widget.
   if (isTruncated && !thought) {
@@ -23,15 +33,6 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string
           </div>
       );
   }
-
-  // Auto-close when complete (unless it was truncated but content kept, then we might want to keep it open)
-  useEffect(() => {
-    if (isComplete && !isTruncated) {
-      setIsOpen(false);
-    } else if (!isComplete && !isTruncated) {
-      setIsOpen(true);
-    }
-  }, [isComplete, isTruncated]);
 
   return (
     <div className={`mb-3 border-l-2 pl-3 ml-1 ${isTruncated ? 'border-amber-400 dark:border-amber-600' : 'border-gray-200 dark:border-dark-700'}`}>
