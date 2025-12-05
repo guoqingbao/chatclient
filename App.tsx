@@ -4,8 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage, SessionStatus } from './types';
-import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig } from './services/geminiService';
-import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon, FinishedIcon } from './components/Icon';
+import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig, fetchModelCapabilities } from './services/geminiService';
+import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon, FinishedIcon, ImageIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
 const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
@@ -141,6 +141,7 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [configError, setConfigError] = useState<string | null>(null);
+  const [isMultimodal, setIsMultimodal] = useState(false); // Track model capabilities
   
   // Edit State
   const [editingMessage, setEditingMessage] = useState<{index: number, text: string} | null>(null);
@@ -210,6 +211,15 @@ const App: React.FC = () => {
        loadConfig();
     }
   }, []);
+
+  // Check Model Capabilities
+  useEffect(() => {
+    const checkCapabilities = async () => {
+        const caps = await fetchModelCapabilities(settings);
+        setIsMultimodal(caps.isMultimodal);
+    };
+    checkCapabilities();
+  }, [settings.model, settings.serverUrl]);
 
   useEffect(() => {
     if (sessions.length > 0 && !currentSessionId) {
@@ -556,7 +566,8 @@ const App: React.FC = () => {
           if (abortControllerRef.current?.signal.aborted) return;
           // Just update the buffer, don't trigger state update here
           bufferedText = chunkText;
-        }
+        },
+        isMultimodal // Pass capability
       );
       
       // FINAL FLUSH: Ensure the very last chunk is rendered even if rAF stops
@@ -809,29 +820,52 @@ const App: React.FC = () => {
       const newAttachments: FileAttachment[] = [];
 
       for (const file of filesArray) {
+        const isImage = file.type.startsWith('image/');
+        
+        if (isImage && !isMultimodal) {
+             alert(`Image upload ignored. Current model "${settings.model}" does not support images.`);
+             continue;
+        }
+
         const isText = file.type.startsWith('text/') || 
                        file.name.match(/\.(js|jsx|ts|tsx|rs|py|c|cpp|h|java|go|rb|php|html|css|json|md|yaml|toml|sh|bat|sql|xml|txt)$/i);
 
-        if (!isText) {
-            alert(`File "${file.name}" ignored. Only text/code files are supported.`);
+        if (!isText && !isImage) {
+            alert(`File "${file.name}" ignored. Only text/code or image files are supported.`);
             continue;
         }
 
         try {
-          const text = await file.text();
-          // Use the exported estimation helper for consistency
-          const tokens = estimateTokenCount(text);
-          newAttachments.push({
-            name: file.name,
-            type: file.type,
-            content: text,
-            tokenCount: tokens
-          });
+          if (isImage) {
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                  const result = ev.target?.result as string;
+                  // For images, we don't count tokens accurately client-side easily, use placeholder
+                  newAttachments.push({
+                      name: file.name,
+                      type: file.type,
+                      content: result, // Data URI
+                      tokenCount: 256 // Heuristic placeholder for image token cost
+                  });
+                  // Trigger update after async read
+                  setAttachments(prev => [...prev, ...newAttachments].filter((v,i,a)=>a.findIndex(t=>(t.name===v.name))===i));
+              };
+              reader.readAsDataURL(file);
+          } else {
+              const text = await file.text();
+              const tokens = estimateTokenCount(text);
+              newAttachments.push({
+                name: file.name,
+                type: file.type,
+                content: text,
+                tokenCount: tokens
+              });
+              setAttachments(prev => [...prev, ...newAttachments]);
+          }
         } catch (err) {
           console.error("Failed to read file", file.name);
         }
       }
-      setAttachments(prev => [...prev, ...newAttachments]);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -991,6 +1025,7 @@ const App: React.FC = () => {
                 <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-200 mb-2">Welcome to ChatClient</h3>
                 <p className="text-center max-w-md text-gray-500 dark:text-gray-500">
                   Start a conversation by typing a message or uploading a file below.
+                  {isMultimodal && <span className="block mt-2 text-indigo-500 text-sm">✨ Image upload enabled for this model</span>}
                 </p>
              </div>
           ) : (
@@ -1002,7 +1037,6 @@ const App: React.FC = () => {
               const isWaitingForFirstToken = isStreaming && streamingSessionId === currentSession.id && msg.role === Role.Model && msg.text === '' && index === currentSession.messages.length - 1;
               
               // Calculate if thinking is truncated
-              // Logic: Has thought, but NOT complete, and we are NO LONGER streaming.
               const isThinkingTruncated = contentParts && contentParts.hasThought && !contentParts.isComplete && !isStreaming;
 
               return (
@@ -1032,13 +1066,29 @@ const App: React.FC = () => {
                        <div className="mb-3 pb-2 border-b border-gray-200 dark:border-gray-700 text-xs flex flex-wrap gap-2">
                          {msg.attachments.map((file, i) => (
                             <span key={i} className="flex items-center gap-1 bg-white dark:bg-dark-900 px-2 py-1 rounded border border-gray-200 dark:border-dark-700">
-                              📄 {file.name} 
-                              <span className="text-gray-400 dark:text-gray-500 text-[10px]">({file.tokenCount}t)</span>
+                              {file.type.startsWith('image/') ? (
+                                  <>
+                                    <span>🖼️ {file.name}</span>
+                                    {/* Preview thumbnail */}
+                                    <img src={file.content} alt={file.name} className="w-8 h-8 object-cover rounded border border-gray-300 dark:border-gray-700 ml-1" />
+                                  </>
+                              ) : (
+                                  <>📄 {file.name} <span className="text-gray-400 dark:text-gray-500 text-[10px]">({file.tokenCount}t)</span></>
+                              )}
                             </span>
                          ))}
                        </div>
                      )}
                      
+                     {/* If the message has images that are attached but maybe not shown in the bubble above, let's show large previews for user messages */}
+                     {msg.role === Role.User && msg.attachments && msg.attachments.some(a => a.type.startsWith('image/')) && (
+                        <div className="mb-4 flex flex-wrap gap-2">
+                             {msg.attachments.filter(a => a.type.startsWith('image/')).map((img, idx) => (
+                                 <img key={idx} src={img.content} alt="Uploaded" className="max-w-full h-auto max-h-[300px] rounded-lg border border-gray-200 dark:border-gray-700" />
+                             ))}
+                        </div>
+                     )}
+
                      {msg.role === Role.Model ? (
                         <div className="markdown-body">
                            {isWaitingForFirstToken && (
@@ -1115,8 +1165,13 @@ const App: React.FC = () => {
                 <div className="absolute bottom-full left-0 mb-3 flex flex-wrap gap-2">
                    {attachments.map((f, i) => (
                      <div key={i} className="flex items-center gap-2 bg-gray-100 dark:bg-dark-800 text-xs text-gray-600 dark:text-gray-300 pl-3 pr-2 py-1.5 rounded-full border border-gray-200 dark:border-dark-700 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+                        {f.type.startsWith('image/') ? (
+                             <img src={f.content} className="w-6 h-6 object-cover rounded-full border border-gray-300" alt="thumb" />
+                        ) : (
+                             <span>📄</span>
+                        )}
                         <span className="truncate max-w-[120px] font-medium">{f.name}</span>
-                        <span className="text-gray-400 text-[10px]">{f.tokenCount}t</span>
+                        {!f.type.startsWith('image/') && <span className="text-gray-400 text-[10px]">{f.tokenCount}t</span>}
                         <button 
                           onClick={() => setAttachments(prev => prev.filter((_, idx) => idx !== i))} 
                           className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-gray-200 dark:hover:bg-dark-600 text-gray-400 transition-colors"
@@ -1133,15 +1188,16 @@ const App: React.FC = () => {
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isStreaming}
                     className="p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors rounded-full hover:bg-gray-200 dark:hover:bg-dark-800 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Upload files"
+                    title={isMultimodal ? "Upload files or images" : "Upload text files"}
                   >
-                    <PaperClipIcon />
+                    {isMultimodal ? <ImageIcon /> : <PaperClipIcon />}
                  </button>
                  <input 
                    type="file" 
                    multiple 
                    ref={fileInputRef} 
                    className="hidden" 
+                   accept={isMultimodal ? "*/*" : ".txt,.md,.json,.js,.ts,.tsx,.py,.java,.c,.cpp,.h,.rs,.go,.html,.css,.xml,.yaml,.toml,.sh,.bat,.sql"}
                    onChange={handleFileUpload}
                   />
 
@@ -1156,7 +1212,7 @@ const App: React.FC = () => {
                         handleSendMessage();
                       }
                     }}
-                    placeholder={isStreaming ? "Wait for response..." : "Message ChatClient..."}
+                    placeholder={isStreaming ? "Wait for response..." : isMultimodal ? "Message ChatClient (Images supported)..." : "Message ChatClient..."}
                     className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none py-3 px-4 max-h-[200px] min-h-[24px] leading-6 custom-scrollbar disabled:cursor-not-allowed"
                     rows={1}
                  />

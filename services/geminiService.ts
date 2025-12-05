@@ -1,13 +1,23 @@
+
 import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
 
-// Helper to prepare messages for OpenAI format
+// Helper to determine if a message contains multimodal content
+const isMultimodalMessage = (text: string, attachments: FileAttachment[]): boolean => {
+  const hasImageAttachments = attachments.some(a => a.type.startsWith('image/'));
+  // Simple heuristic for image URLs in text (ends with image extension)
+  const hasImageUrls = /\bhttps?:\/\/\S+\.(png|jpg|jpeg|gif|webp|bmp|tiff)\b/i.test(text);
+  return hasImageAttachments || hasImageUrls;
+};
+
+// Helper to prepare messages for OpenAI format, supporting Multimodal (Rust Backend)
 const prepareMessages = (
   history: Message[], 
   newMessage: string, 
   attachments: FileAttachment[], 
-  settings: AppSettings
+  settings: AppSettings,
+  isMultimodalSupported: boolean
 ) => {
-  const messages = [];
+  const messages: any[] = [];
 
   // 1. System Instruction
   if (settings.systemInstruction) {
@@ -18,32 +28,163 @@ const prepareMessages = (
   history.forEach(msg => {
     if (msg.isError) return;
     
-    let content = msg.text;
-    
-    // Re-inject file context if it exists in history
-    if (msg.attachments && msg.attachments.length > 0) {
-       const fileContext = msg.attachments.map(f => 
-        `\n--- START FILE: ${f.name} ---\n${f.content}\n--- END FILE ---\n`
-      ).join('');
-      content = `[Context Files Uploaded]\n${fileContext}\n\n${msg.text}`;
-    }
+    // Check if this historic message has images
+    const hasImages = msg.attachments && msg.attachments.some(a => a.type.startsWith('image/'));
+    const shouldUseMultimodal = isMultimodalSupported && (hasImages || isMultimodalMessage(msg.text, msg.attachments || []));
 
-    messages.push({
-      role: msg.role === Role.User ? 'user' : 'assistant',
-      content: content
-    });
+    if (shouldUseMultimodal) {
+        const contentParts: any[] = [];
+        
+        // Add text context from TEXT files (not images)
+        if (msg.attachments && msg.attachments.length > 0) {
+             const textFiles = msg.attachments.filter(f => !f.type.startsWith('image/'));
+             if (textFiles.length > 0) {
+                 const fileContext = textFiles.map(f => 
+                    `\n--- START FILE: ${f.name} ---\n${f.content}\n--- END FILE ---\n`
+                 ).join('');
+                 contentParts.push({
+                     type: "input_text",
+                     text: `[Context Files Uploaded]\n${fileContext}`
+                 });
+             }
+        }
+
+        // Add Image Attachments
+        if (msg.attachments) {
+            msg.attachments.filter(f => f.type.startsWith('image/')).forEach(img => {
+                // Extract base64 from Data URI (data:image/png;base64,.....)
+                const base64Data = img.content.split(',')[1]; 
+                if (base64Data) {
+                    contentParts.push({
+                        type: "image_base64",
+                        image_base64: base64Data
+                    });
+                }
+            });
+        }
+
+        // Add User Text (Split by Image URLs if present)
+        const text = msg.text;
+        // Regex to find image URLs
+        const urlRegex = /(\bhttps?:\/\/\S+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff)\b)/gi;
+        const parts = text.split(urlRegex);
+
+        parts.forEach(part => {
+            if (!part) return;
+            if (part.match(urlRegex)) {
+                 contentParts.push({
+                     type: "image_url",
+                     image_url: part
+                 });
+            } else {
+                 // Avoid adding empty whitespace text blocks if possible, but keep structure
+                 if (part.trim().length > 0 || parts.length === 1) {
+                     contentParts.push({
+                         type: "input_text",
+                         text: part
+                     });
+                 }
+            }
+        });
+        
+        // If empty content parts (rare), ensure at least empty text
+        if (contentParts.length === 0) {
+            contentParts.push({ type: "input_text", text: "" });
+        }
+
+        messages.push({
+            role: msg.role === Role.User ? 'user' : 'assistant',
+            content: contentParts
+        });
+
+    } else {
+        // STANDARD TEXT ONLY MODE
+        let content = msg.text;
+        
+        // Re-inject file context if it exists in history
+        if (msg.attachments && msg.attachments.length > 0) {
+           const fileContext = msg.attachments.filter(f => !f.type.startsWith('image/')).map(f => 
+            `\n--- START FILE: ${f.name} ---\n${f.content}\n--- END FILE ---\n`
+          ).join('');
+          if (fileContext) {
+             content = `[Context Files Uploaded]\n${fileContext}\n\n${msg.text}`;
+          }
+        }
+
+        messages.push({
+          role: msg.role === Role.User ? 'user' : 'assistant',
+          content: content
+        });
+    }
   });
 
   // 3. New Message
-  let currentContent = newMessage;
-  if (attachments.length > 0) {
-    const fileContext = attachments.map(f => 
-      `\n--- START FILE: ${f.name} ---\n${f.content}\n--- END FILE ---\n`
-    ).join('');
-    currentContent = `[Context Files Uploaded]\n${fileContext}\n\n${newMessage}`;
-  }
+  const shouldUseMultimodalForNew = isMultimodalSupported && isMultimodalMessage(newMessage, attachments);
 
-  messages.push({ role: 'user', content: currentContent });
+  if (shouldUseMultimodalForNew) {
+      const contentParts: any[] = [];
+
+      // Text files context
+      const textFiles = attachments.filter(f => !f.type.startsWith('image/'));
+      if (textFiles.length > 0) {
+         const fileContext = textFiles.map(f => 
+            `\n--- START FILE: ${f.name} ---\n${f.content}\n--- END FILE ---\n`
+         ).join('');
+         contentParts.push({
+             type: "input_text",
+             text: `[Context Files Uploaded]\n${fileContext}`
+         });
+      }
+
+      // Image Attachments
+      attachments.filter(f => f.type.startsWith('image/')).forEach(img => {
+          const base64Data = img.content.split(',')[1];
+          if (base64Data) {
+              contentParts.push({
+                  type: "image_base64",
+                  image_base64: base64Data
+              });
+          }
+      });
+
+      // Text and URLs
+      const urlRegex = /(\bhttps?:\/\/\S+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff)\b)/gi;
+      const parts = newMessage.split(urlRegex);
+      
+      parts.forEach(part => {
+         if (!part) return;
+         if (part.match(urlRegex)) {
+             contentParts.push({
+                 type: "image_url",
+                 image_url: part
+             });
+         } else {
+             if (part.trim().length > 0 || parts.length === 1) {
+                 contentParts.push({
+                     type: "input_text",
+                     text: part
+                 });
+             }
+         }
+      });
+      
+       if (contentParts.length === 0) {
+            contentParts.push({ type: "input_text", text: "" });
+       }
+
+      messages.push({ role: 'user', content: contentParts });
+
+  } else {
+      // STANDARD TEXT ONLY
+      let currentContent = newMessage;
+      if (attachments.length > 0) {
+        const fileContext = attachments.filter(f => !f.type.startsWith('image/')).map(f => 
+          `\n--- START FILE: ${f.name} ---\n${f.content}\n--- END FILE ---\n`
+        ).join('');
+        currentContent = `[Context Files Uploaded]\n${fileContext}\n\n${newMessage}`;
+      }
+      messages.push({ role: 'user', content: currentContent });
+  }
 
   return messages;
 };
@@ -79,7 +220,6 @@ export const estimateTokenCount = (text: string): number => {
 export const fetchServerConfig = async (): Promise<ServerConfig | null> => {
     try {
         // Fetch from the same origin that served the web app
-        // The Rust backend should intercept this route and return the JSON
         const response = await fetch('/app-config.json', {
             method: 'GET',
             cache: 'no-store'
@@ -93,6 +233,45 @@ export const fetchServerConfig = async (): Promise<ServerConfig | null> => {
         return null;
     }
 };
+
+export const fetchModelCapabilities = async (settings: AppSettings): Promise<{ isMultimodal: boolean }> => {
+    if (!settings.serverUrl || !settings.model) return { isMultimodal: false };
+
+    try {
+      let baseUrl = settings.serverUrl.trim().replace(/\/+$/, '');
+      baseUrl = baseUrl.replace('0.0.0.0', 'localhost');
+      if (!baseUrl.startsWith('http') && !baseUrl.startsWith('/')) baseUrl = 'http://' + baseUrl;
+      
+      baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
+      const url = `${baseUrl}/models`;
+
+      const headers: Record<string, string> = {};
+      if (settings.apiKey) {
+        headers['Authorization'] = `Bearer ${settings.apiKey}`;
+      }
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+        credentials: 'omit'
+      });
+      
+      if (!response.ok) return { isMultimodal: false };
+      
+      const data = await response.json();
+      if (data && Array.isArray(data.data)) {
+          const modelData = data.data.find((m: any) => m.id === settings.model);
+          if (modelData && Array.isArray(modelData.modalities)) {
+              return { isMultimodal: modelData.modalities.includes("image") };
+          }
+      }
+      return { isMultimodal: false };
+
+    } catch (e) {
+        return { isMultimodal: false };
+    }
+};
+
 
 export const fetchTokenUsage = async (
   sessionId: string, 
@@ -154,10 +333,11 @@ export const streamChatResponse = async (
   attachments: FileAttachment[],
   settings: AppSettings,
   signal: AbortSignal,
-  onChunk: (text: string) => void
+  onChunk: (text: string) => void,
+  isMultimodalSupported: boolean
 ): Promise<string> => {
 
-  const messages = prepareMessages(history, newMessage, attachments, settings);
+  const messages = prepareMessages(history, newMessage, attachments, settings, isMultimodalSupported);
   const url = getEndpoint(settings.serverUrl);
   
   const headers: Record<string, string> = {
