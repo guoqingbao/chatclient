@@ -553,11 +553,12 @@ const App: React.FC = () => {
     animationFrameId = requestAnimationFrame(flushBuffer);
 
     try {
-      const historyForApi = updatedMessages.slice(0, -1); 
-
+      // NOTE: We pass historyMessages (the state BEFORE the new user message) 
+      // because streamChatResponse appends the new message manually. 
+      // Passing updatedMessages would cause duplication.
       await streamChatResponse(
         sessionId,
-        historyForApi.filter(m => m.role !== Role.Model || m.text.length > 0),
+        historyMessages.filter(m => m.role !== Role.Model || m.text.length > 0),
         userText,
         userAttachments,
         settings,
