@@ -1,7 +1,7 @@
-
 import React, { useState, useEffect } from 'react';
 import { AppSettings } from '../types';
 import { RefreshIcon } from './Icon';
+import { fetchAvailableModels } from '../services/geminiService';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -29,30 +29,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
     setFetchError(null);
 
     try {
-      let baseUrl = settings.serverUrl.trim().replace(/\/+$/, '');
-      baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
-      const url = `${baseUrl}/models`;
-
-      // console.log(`[Settings] Fetching models from: ${url}`);
-
-      const headers: Record<string, string> = {};
-      if (settings.apiKey) {
-        headers['Authorization'] = `Bearer ${settings.apiKey}`;
-      }
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers,
-        credentials: 'omit',
-      });
-
-      if (!response.ok) {
-         throw new Error(`Server returned ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      if (data && Array.isArray(data.data)) {
-        const modelIds = data.data.map((m: any) => m.id);
+      const models = await fetchAvailableModels(settings);
+      
+      if (models.length > 0) {
+        const modelIds = models.map((m: any) => m.id);
         setAvailableModels(modelIds);
         
         // Auto-select first model if current is 'default' (placeholder) or not in the list
@@ -62,7 +42,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
            }
         }
       } else {
-        throw new Error("Invalid JSON format received from server");
+        // Only throw error if we explicitly failed to get any models but the call completed
+        // For empty list, we might just keep quiet or show empty
+        if (models.length === 0 && settings.serverUrl) {
+            // It might be a connection error caught inside fetchAvailableModels returning []
+            // We can try to infer if it was an error or just empty list, 
+            // but for now we assume empty list means something went wrong or no models.
+             setFetchError("No models found or connection failed.");
+        }
       }
     } catch (error: any) {
       console.error("Failed to fetch models:", error);

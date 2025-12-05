@@ -3,21 +3,12 @@ import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage, SessionStatus } from './types';
-import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig, fetchModelCapabilities } from './services/geminiService';
+import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig, fetchModelCapabilities, fetchAvailableModels } from './services/geminiService';
 import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon, FinishedIcon, ImageIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
 const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
   const [isOpen, setIsOpen] = useState(!isComplete || isTruncated);
-
-  // Auto-close when complete (unless it was truncated but content kept, then we might want to keep it open)
-  useEffect(() => {
-    if (isComplete && !isTruncated) {
-      setIsOpen(false);
-    } else if (!isComplete && !isTruncated) {
-      setIsOpen(true);
-    }
-  }, [isComplete, isTruncated]);
 
   // If the thought content was moved to main text (indicated by isTruncated=true AND empty thought),
   // we render a static warning banner instead of the collapsible widget.
@@ -32,6 +23,15 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string
           </div>
       );
   }
+
+  // Auto-close when complete (unless it was truncated but content kept, then we might want to keep it open)
+  useEffect(() => {
+    if (isComplete && !isTruncated) {
+      setIsOpen(false);
+    } else if (!isComplete && !isTruncated) {
+      setIsOpen(true);
+    }
+  }, [isComplete, isTruncated]);
 
   return (
     <div className={`mb-3 border-l-2 pl-3 ml-1 ${isTruncated ? 'border-amber-400 dark:border-amber-600' : 'border-gray-200 dark:border-dark-700'}`}>
@@ -225,14 +225,39 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Check Model Capabilities
+  // Check Model Capabilities AND Auto-Correct Model Selection
   useEffect(() => {
-    const checkCapabilities = async () => {
-        const caps = await fetchModelCapabilities(settings);
-        setIsMultimodal(caps.isMultimodal);
+    const validateAndCheckCapabilities = async () => {
+        if (!settings.serverUrl) return;
+
+        // First, check if current model is valid or needs auto-selection
+        const availableModels = await fetchAvailableModels(settings);
+        let currentModel = settings.model;
+
+        if (availableModels && availableModels.length > 0) {
+             const modelIds = availableModels.map((m: any) => m.id);
+             
+             // If model is 'default' or not in the list, auto-switch to first available
+             if (currentModel === 'default' || !modelIds.includes(currentModel)) {
+                 currentModel = modelIds[0];
+                 setSettings(prev => ({ ...prev, model: currentModel }));
+             }
+             
+             // Check capabilities for the (potentially new) model
+             const modelData = availableModels.find((m: any) => m.id === currentModel);
+             if (modelData && Array.isArray(modelData.modalities)) {
+                 setIsMultimodal(modelData.modalities.includes("image"));
+             } else {
+                 setIsMultimodal(false);
+             }
+        } else {
+             // Fallback if model list fetch fails, check capabilities endpoint directly (redundant but safe)
+             const caps = await fetchModelCapabilities(settings);
+             setIsMultimodal(caps.isMultimodal);
+        }
     };
-    checkCapabilities();
-  }, [settings.model, settings.serverUrl]);
+    validateAndCheckCapabilities();
+  }, [settings.serverUrl, settings.apiKey, settings.model]); // Re-run when settings change
 
   useEffect(() => {
     if (sessions.length > 0 && !currentSessionId) {

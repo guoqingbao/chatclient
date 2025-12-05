@@ -254,8 +254,8 @@ export const fetchServerConfig = async (): Promise<ServerConfig | null> => {
     }
 };
 
-export const fetchModelCapabilities = async (settings: AppSettings): Promise<{ isMultimodal: boolean }> => {
-    if (!settings.serverUrl || !settings.model) return { isMultimodal: false };
+export const fetchAvailableModels = async (settings: AppSettings): Promise<any[]> => {
+    if (!settings.serverUrl) return [];
 
     try {
       let baseUrl = settings.serverUrl.trim().replace(/\/+$/, '');
@@ -276,14 +276,27 @@ export const fetchModelCapabilities = async (settings: AppSettings): Promise<{ i
         credentials: 'omit'
       });
       
-      if (!response.ok) return { isMultimodal: false };
+      if (!response.ok) return [];
       
       const data = await response.json();
       if (data && Array.isArray(data.data)) {
-          const modelData = data.data.find((m: any) => m.id === settings.model);
-          if (modelData && Array.isArray(modelData.modalities)) {
-              return { isMultimodal: modelData.modalities.includes("image") };
-          }
+          return data.data;
+      }
+      return [];
+    } catch (e) {
+        return [];
+    }
+};
+
+export const fetchModelCapabilities = async (settings: AppSettings): Promise<{ isMultimodal: boolean }> => {
+    if (!settings.serverUrl || !settings.model) return { isMultimodal: false };
+
+    try {
+      const models = await fetchAvailableModels(settings);
+      const modelData = models.find((m: any) => m.id === settings.model);
+      
+      if (modelData && Array.isArray(modelData.modalities)) {
+          return { isMultimodal: modelData.modalities.includes("image") };
       }
       return { isMultimodal: false };
 
