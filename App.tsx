@@ -165,6 +165,7 @@ const App: React.FC = () => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true); 
   const botTurnRef = useRef<HTMLDivElement>(null); // Ref for the newest bot response start
+  const scrollToNewTurnRef = useRef(false); // Flag to trigger scroll to top
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -304,6 +305,16 @@ const App: React.FC = () => {
       scrollToBottom();
     }
   }, [sessions, currentSessionId, isStreaming]);
+  
+  // Specific effect to handle "Pin to Top" for new turns
+  useEffect(() => {
+    if (scrollToNewTurnRef.current && botTurnRef.current) {
+        // Use smooth scroll to bring the assistant message to the start of the block
+        botTurnRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Reset flag immediately to prevent re-scrolling on subsequent token updates
+        scrollToNewTurnRef.current = false;
+    }
+  }, [sessions]);
 
   const handleScroll = () => {
     if (!scrollContainerRef.current) return;
@@ -392,13 +403,9 @@ const App: React.FC = () => {
 
     const updatedMessages = [...historyMessages, newUserMsg, newBotMsg];
     updateSessionMessages(sessionId, updatedMessages);
-
-    // Pin assistant response start to top. Push user prompt out of screen.
-    setTimeout(() => {
-        if (botTurnRef.current) {
-            botTurnRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-    }, 10);
+    
+    // Set flag to trigger the "Pin to Top" scroll in useEffect
+    scrollToNewTurnRef.current = true;
 
     let bufferedText = "";
     let animationFrameId: number;
