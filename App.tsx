@@ -164,7 +164,7 @@ const App: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true); 
-  const newTurnRef = useRef<HTMLDivElement>(null); // Ref for the newest user turn
+  const botTurnRef = useRef<HTMLDivElement>(null); // Ref for the newest bot response start
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -298,7 +298,7 @@ const App: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
   };
 
-  // Modified auto-scroll effect: Block auto-scroll during streaming to support "pin to top" reading
+  // Modified auto-scroll effect: Block auto-scroll during streaming to support pinned top reading
   useEffect(() => {
     if (shouldAutoScrollRef.current && !isStreaming) {
       scrollToBottom();
@@ -310,8 +310,7 @@ const App: React.FC = () => {
     const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
     const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
     
-    // During streaming, we only allow manual scrolling.
-    // If NOT streaming, we respect the user's "at bottom" status.
+    // During streaming, we block auto-scroll to allow users to read fixed content
     if (!isStreaming) {
         shouldAutoScrollRef.current = isAtBottom;
     }
@@ -384,7 +383,7 @@ const App: React.FC = () => {
     setStreamingSessionId(sessionId);
     setSessionStatuses(prev => ({ ...prev, [sessionId]: 'Running' }));
 
-    // NEW LOGIC: Disable auto-scroll so the user can read the response as it grows down from the top.
+    // Disable auto-scroll so assistant text grows downward from a fixed top position
     shouldAutoScrollRef.current = false; 
     abortControllerRef.current = new AbortController();
 
@@ -394,10 +393,10 @@ const App: React.FC = () => {
     const updatedMessages = [...historyMessages, newUserMsg, newBotMsg];
     updateSessionMessages(sessionId, updatedMessages);
 
-    // Give React a cycle to mount the new turn before we scroll it into view at the top.
+    // Pin assistant response start to top. Push user prompt out of screen.
     setTimeout(() => {
-        if (newTurnRef.current) {
-            newTurnRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (botTurnRef.current) {
+            botTurnRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     }, 10);
 
@@ -663,13 +662,13 @@ const App: React.FC = () => {
               const isWaitingForFirstToken = isStreaming && streamingSessionId === currentSession.id && msg.role === Role.Model && msg.text === '' && index === currentSession.messages.length - 1;
               const isThinkingTruncated = contentParts && contentParts.hasThought && !contentParts.isComplete && !isStreaming;
               
-              // Identification for newest turn to support pinning to top
-              const isNewestUserMsg = msg.role === Role.User && index === currentSession.messages.length - 2;
+              // Pin logic: attach ref to the assistant's response start (the very last message)
+              const isAssistantActiveTurn = msg.role === Role.Model && index === currentSession.messages.length - 1;
 
               return (
               <div 
                 key={msg.id} 
-                ref={isNewestUserMsg ? newTurnRef : null}
+                ref={isAssistantActiveTurn ? botTurnRef : null}
                 className={`flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}
               >
                 <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-1 border border-gray-200 dark:border-gray-700 ${msg.role === Role.User ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 shadow-sm'}`}>

@@ -80,7 +80,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   topK: 0, 
   topP: 0.95,
   maxOutputTokens: 32768,
-  systemInstruction: 'You are a helpful, versatile AI assistant with broad expertise.',
+  systemInstruction: '', // Cleared as requested
   language: 'en',
   theme: 'light',
   serverUrl: 'http://localhost:8000/v1/', 
