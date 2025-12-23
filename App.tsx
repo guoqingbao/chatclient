@@ -295,8 +295,9 @@ const App: React.FC = () => {
     else root.classList.remove('dark');
   }, [settings.theme]);
 
+  // FIX: Explicitly align to 'end' (bottom) to avoid the spacer pushing content up to the top
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
   };
 
   // Modified auto-scroll effect: Block auto-scroll during streaming to support pinned top reading
