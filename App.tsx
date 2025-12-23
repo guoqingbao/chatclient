@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
@@ -146,6 +147,9 @@ const App: React.FC = () => {
     }
     return DEFAULT_SETTINGS;
   });
+
+  // Runtime-only state for sampling. Does not persist to localStorage as per request.
+  const [useSampling, setUseSampling] = useState(false);
 
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -615,7 +619,8 @@ const App: React.FC = () => {
           // Just update the buffer, don't trigger state update here
           bufferedText = chunkText;
         },
-        isMultimodal // Pass capability
+        isMultimodal, // Pass capability
+        useSampling // Pass sampling flag (runtime state)
       );
       
       // FINAL FLUSH: Ensure the very last chunk is rendered even if rAF stops
@@ -1369,6 +1374,8 @@ const App: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSettingsChange={setSettings}
+        useSampling={useSampling}
+        onSamplingToggle={setUseSampling}
       />
 
       <EditMessageModal 

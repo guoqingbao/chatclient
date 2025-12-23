@@ -1,3 +1,4 @@
+
 import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
 
 // Helper to determine if a message contains multimodal content
@@ -367,7 +368,8 @@ export const streamChatResponse = async (
   settings: AppSettings,
   signal: AbortSignal,
   onChunk: (text: string) => void,
-  isMultimodalSupported: boolean
+  isMultimodalSupported: boolean,
+  useSampling: boolean = false
 ): Promise<string> => {
 
   const messages = prepareMessages(history, newMessage, attachments, settings, isMultimodalSupported);
@@ -385,13 +387,16 @@ export const streamChatResponse = async (
     model: settings.model,
     messages: messages,
     stream: true,
-    temperature: settings.temperature,
-    top_p: settings.topP,
     max_tokens: settings.maxOutputTokens,
   };
 
-  if (settings.topK > 0) {
-    body.top_k = settings.topK;
+  // Only inject sampling parameters if explicitly enabled by user toggle
+  if (useSampling) {
+      body.temperature = settings.temperature;
+      body.top_p = settings.topP;
+      if (settings.topK > 0) {
+        body.top_k = settings.topK;
+      }
   }
 
   // Inject session_id if context caching is enabled

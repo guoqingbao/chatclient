@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { AppSettings } from '../types';
 import { RefreshIcon } from './Icon';
@@ -8,9 +9,18 @@ interface SettingsModalProps {
   onClose: () => void;
   settings: AppSettings;
   onSettingsChange: (newSettings: AppSettings) => void;
+  useSampling: boolean;
+  onSamplingToggle: (val: boolean) => void;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings, onSettingsChange }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ 
+  isOpen, 
+  onClose, 
+  settings, 
+  onSettingsChange,
+  useSampling,
+  onSamplingToggle
+}) => {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -42,12 +52,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
            }
         }
       } else {
-        // Only throw error if we explicitly failed to get any models but the call completed
-        // For empty list, we might just keep quiet or show empty
         if (models.length === 0 && settings.serverUrl) {
-            // It might be a connection error caught inside fetchAvailableModels returning []
-            // We can try to infer if it was an error or just empty list, 
-            // but for now we assume empty list means something went wrong or no models.
              setFetchError("No models found or connection failed.");
         }
       }
@@ -172,8 +177,25 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
               />
             </div>
 
+            {/* Sampling Parameters Toggle */}
+            <div className="flex items-center justify-between border border-indigo-50 dark:border-indigo-900/20 bg-indigo-50/30 dark:bg-indigo-900/5 p-3 rounded-lg">
+              <div>
+                <div className="text-sm font-medium text-gray-900 dark:text-white">Advanced Sampling</div>
+                <div className="text-xs text-gray-500">Enable Temperature, Top-P, and Top-K</div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  className="sr-only peer" 
+                  checked={useSampling}
+                  onChange={(e) => onSamplingToggle(e.target.checked)}
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+
             {/* Temperature */}
-            <div>
+            <div className={`transition-opacity duration-200 ${useSampling ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
               <div className="flex justify-between">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
                 <span className="text-xs text-gray-500 font-mono">{settings.temperature}</span>
@@ -183,6 +205,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                 min="0" 
                 max="2" 
                 step="0.1"
+                disabled={!useSampling}
                 className="w-full accent-indigo-600 dark:accent-indigo-400 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
                 value={settings.temperature}
                 onChange={(e) => handleChange('temperature', parseFloat(e.target.value))}
@@ -190,7 +213,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
             </div>
 
             {/* Top P */}
-             <div>
+             <div className={`transition-opacity duration-200 ${useSampling ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
               <div className="flex justify-between">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Top P</label>
                 <span className="text-xs text-gray-500 font-mono">{settings.topP}</span>
@@ -200,9 +223,26 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                 min="0" 
                 max="1" 
                 step="0.05"
+                disabled={!useSampling}
                 className="w-full accent-indigo-600 dark:accent-indigo-400 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
                 value={settings.topP}
                 onChange={(e) => handleChange('topP', parseFloat(e.target.value))}
+              />
+            </div>
+
+            {/* Top K (Conditional) */}
+            <div className={`transition-opacity duration-200 ${useSampling ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+              <div className="flex justify-between">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Top K</label>
+                <span className="text-xs text-gray-500 font-mono">{settings.topK}</span>
+              </div>
+              <input 
+                type="number" 
+                min="0"
+                disabled={!useSampling}
+                className="w-full bg-gray-50 dark:bg-dark-950 border border-gray-200 dark:border-dark-800 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                value={settings.topK}
+                onChange={(e) => handleChange('topK', parseInt(e.target.value) || 0)}
               />
             </div>
 
