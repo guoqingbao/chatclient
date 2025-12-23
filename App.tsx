@@ -681,7 +681,7 @@ const App: React.FC = () => {
               <div 
                 key={msg.id} 
                 ref={isAssistantActiveTurn ? botTurnRef : null}
-                className={`flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}
+                className={`scroll-mt-32 flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}
               >
                 <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-1 border border-gray-200 dark:border-gray-700 ${msg.role === Role.User ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 shadow-sm'}`}>
                   {msg.role === Role.User ? <UserIcon /> : <BotIcon />}
