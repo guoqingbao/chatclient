@@ -309,9 +309,13 @@ const App: React.FC = () => {
   // Specific effect to handle "Pin to Top" for new turns
   useEffect(() => {
     if (scrollToNewTurnRef.current && botTurnRef.current) {
-        // Use smooth scroll to bring the assistant message to the start of the block
-        botTurnRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        // Reset flag immediately to prevent re-scrolling on subsequent token updates
+        // We use requestAnimationFrame and a small timeout to ensure layout (and the spacer) 
+        // is fully rendered before we attempt to scroll.
+        requestAnimationFrame(() => {
+             setTimeout(() => {
+                botTurnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+             }, 50);
+        });
         scrollToNewTurnRef.current = false;
     }
   }, [sessions]);
@@ -717,6 +721,8 @@ const App: React.FC = () => {
             )})
           )}
           <div ref={messagesEndRef} className="h-4" />
+          {/* Spacer to allow scrolling the last message to the top */}
+          <div className="h-[80vh] w-full" aria-hidden="true" />
         </div>
 
         {/* Input Area */}
