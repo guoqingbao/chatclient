@@ -177,6 +177,23 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               />
             </div>
 
+             {/* Thinking Toggle - Standalone */}
+             <div className="flex items-center justify-between border border-gray-100 dark:border-dark-800 p-3 rounded-lg bg-gray-50 dark:bg-dark-900/50">
+                <div>
+                  <div className="text-sm font-medium text-gray-900 dark:text-white">Enable Thinking</div>
+                  <div className="text-xs text-gray-500">For reasoning models (CoT)</div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    className="sr-only peer" 
+                    checked={settings.thinking}
+                    onChange={(e) => handleChange('thinking', e.target.checked)}
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                </label>
+            </div>
+
             {/* Sampling Parameters Toggle */}
             <div className="flex items-center justify-between border border-indigo-50 dark:border-indigo-900/20 bg-indigo-50/30 dark:bg-indigo-900/5 p-3 rounded-lg">
               <div>
@@ -292,24 +309,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     value={settings.repeatLastN}
                     onChange={(e) => handleChange('repeatLastN', parseInt(e.target.value))}
                   />
-                </div>
-
-                 {/* Thinking Toggle */}
-                 <div className="flex items-center justify-between border border-gray-100 dark:border-dark-800 p-2 rounded-lg">
-                  <div>
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">Enable Thinking</div>
-                    <div className="text-xs text-gray-500">Use with reasoning models</div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      className="sr-only peer" 
-                      checked={settings.thinking}
-                      disabled={!useSampling}
-                      onChange={(e) => handleChange('thinking', e.target.checked)}
-                    />
-                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
-                  </label>
                 </div>
             </div>
 

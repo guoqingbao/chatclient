@@ -390,6 +390,12 @@ export const streamChatResponse = async (
     max_tokens: settings.maxOutputTokens,
   };
 
+  // Feature Flag: Thinking (CoT)
+  // Sent regardless of sampling settings because it's a capability flag
+  if (settings.thinking) {
+      body.thinking = true;
+  }
+
   // Only inject sampling parameters if explicitly enabled by user toggle
   if (useSampling) {
       body.temperature = settings.temperature;
@@ -404,11 +410,6 @@ export const streamChatResponse = async (
       body.frequency_penalty = settings.frequencyPenalty;
       body.presence_penalty = settings.presencePenalty;
       body.repeat_last_n = settings.repeatLastN;
-      
-      // 'thinking' is mostly boolean feature flag for some models
-      if (settings.thinking) {
-          body.thinking = true;
-      }
   }
 
   // Inject session_id if context caching is enabled
