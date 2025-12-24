@@ -7,6 +7,7 @@ import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachme
 import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig, fetchModelCapabilities, fetchAvailableModels } from './services/geminiService';
 import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon, FinishedIcon, ImageIcon, CheckIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
+import { saveAttachmentToDB, getAttachmentFromDB, pruneOrphanedAttachments, deleteAttachmentFromDB } from './services/db';
 
 const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
   const [isOpen, setIsOpen] = useState(!isComplete || isTruncated);
@@ -122,19 +123,17 @@ const EditMessageModal = ({
   );
 };
 
-const App: React.FC = () => {
-  const [sessions, setSessions] = useState<ChatSession[]>(() => {
-    try {
-        const stored = localStorage.getItem('chat_client_sessions');
-        return stored ? JSON.parse(stored) : [];
-    } catch (e) {
-        console.error("Failed to load sessions", e);
-        return [];
-    }
-  });
+// Helper to generate a stable ID for attachments based on their location in the chat tree
+const generateAttachmentKey = (sessionId: string, messageId: string, index: number) => {
+    return `${sessionId}_${messageId}_${index}`;
+};
 
+const App: React.FC = () => {
+  // --- STATE ---
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [isHydrated, setIsHydrated] = useState(false); // Controls when it's safe to write to disk
+  
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [storageWarning, setStorageWarning] = useState<boolean>(false);
   
   const [settings, setSettings] = useState<AppSettings>(() => {
     const stored = localStorage.getItem('chat_client_settings');
@@ -165,18 +164,130 @@ const App: React.FC = () => {
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionStatus>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
+  // --- REFS ---
   const usageFailuresRef = useRef(0);
   const sessionsRef = useRef(sessions);
-  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true); 
-  const botTurnRef = useRef<HTMLDivElement>(null); // Ref for the newest bot response start
-  const scrollToNewTurnRef = useRef(false); // Flag to trigger scroll to top
-
+  const botTurnRef = useRef<HTMLDivElement>(null); 
+  const scrollToNewTurnRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // --- INITIALIZATION & HYDRATION ---
+
+  // 1. Initial Load from LocalStorage + IndexedDB Hydration
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const storedSessions = localStorage.getItem('chat_client_sessions');
+        let initialSessions: ChatSession[] = storedSessions ? JSON.parse(storedSessions) : [];
+        
+        // Hydrate attachments from IndexedDB
+        // This runs once on mount.
+        const activeAttachmentKeys: string[] = [];
+        
+        const hydratedSessions = await Promise.all(initialSessions.map(async (session) => {
+           const hydratedMessages = await Promise.all(session.messages.map(async (msg) => {
+               if (msg.attachments && msg.attachments.length > 0) {
+                   const hydratedAttachments = await Promise.all(msg.attachments.map(async (att, idx) => {
+                       // Only try to load from DB if content is missing (which it should be for large files)
+                       // and it's an image or large file.
+                       const key = generateAttachmentKey(session.id, msg.id, idx);
+                       activeAttachmentKeys.push(key);
+                       
+                       if (!att.content || att.content === "") {
+                           const dbContent = await getAttachmentFromDB(key);
+                           if (dbContent) {
+                               return { ...att, content: dbContent };
+                           }
+                       }
+                       return att;
+                   }));
+                   return { ...msg, attachments: hydratedAttachments };
+               }
+               return msg;
+           }));
+           return { ...session, messages: hydratedMessages };
+        }));
+
+        setSessions(hydratedSessions);
+        if (hydratedSessions.length > 0 && !currentSessionId) {
+            setCurrentSessionId(hydratedSessions[0].id);
+        } else if (hydratedSessions.length === 0) {
+            // Will trigger creation in next effect if still empty
+        }
+        
+        setIsHydrated(true);
+
+        // Async cleanup of old attachments
+        setTimeout(() => pruneOrphanedAttachments(activeAttachmentKeys), 5000);
+
+      } catch (e) {
+        console.error("Failed to load sessions:", e);
+        setSessions([]);
+        setIsHydrated(true);
+      }
+    };
+    loadData();
+  }, []); // Run once
+
+  // 2. Default Session Creation
+  useEffect(() => {
+    if (isHydrated && sessions.length === 0) {
+        createNewSession();
+    }
+  }, [isHydrated, sessions.length]);
+
+  // 3. PERSISTENCE (Hybrid Strategy)
+  useEffect(() => {
+    // Only save if we have successfully loaded first. 
+    // Otherwise we might overwrite existing data with empty state.
+    if (!isHydrated) return; 
+    
+    sessionsRef.current = sessions;
+    
+    const saveToStorage = async () => {
+        try {
+            // 1. Identify heavy attachments and save to IndexedDB
+            const leanSessions = sessions.map(session => ({
+                ...session,
+                messages: session.messages.map(msg => ({
+                    ...msg,
+                    attachments: msg.attachments?.map((att, idx) => {
+                        // If it has content, save to DB and strip from LS
+                        if (att.content && att.content.length > 100) { 
+                            const key = generateAttachmentKey(session.id, msg.id, idx);
+                            // Fire and forget save (or await if critical, but we want UI responsive)
+                            saveAttachmentToDB(key, att.content);
+                            
+                            // Return lean object for LocalStorage
+                            return { ...att, content: '' }; 
+                        }
+                        // Small text files can stay in LS
+                        return att;
+                    })
+                }))
+            }));
+
+            // 2. Save lean structure to LocalStorage
+            localStorage.setItem('chat_client_sessions', JSON.stringify(leanSessions));
+            
+        } catch (e) {
+            console.error("Failed to save sessions:", e);
+        }
+    };
+    
+    // Debounce slightly to avoid thrashing IDB on typing, 
+    // though most updates here are message additions which are infrequent enough.
+    const timer = setTimeout(saveToStorage, 500);
+    return () => clearTimeout(timer);
+
+  }, [sessions, isHydrated]);
+
+  // --- OTHER EFFECTS ---
 
   useEffect(() => {
     let attempts = 0;
@@ -221,51 +332,6 @@ const App: React.FC = () => {
     };
     validateAndCheckCapabilities();
   }, [settings.serverUrl, settings.apiKey, settings.model]);
-
-  useEffect(() => {
-    if (sessions.length > 0 && !currentSessionId) setCurrentSessionId(sessions[0].id);
-    else if (sessions.length === 0) createNewSession();
-  }, []);
-
-  // SAFE STORAGE LOGIC
-  useEffect(() => {
-    sessionsRef.current = sessions;
-    if (sessions.length > 0) {
-        try {
-            // Attempt full save
-            localStorage.setItem('chat_client_sessions', JSON.stringify(sessions));
-            setStorageWarning(false);
-        } catch (e: any) {
-            // Check for QuotaExceededError (name can vary by browser)
-            if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22) {
-                console.warn("Storage quota exceeded. Stripping attachment content to save chat history.");
-                
-                // Create a "light" version of sessions for storage
-                // We keep text metadata but remove the heavy base64 content
-                const lightSessions = sessions.map(s => ({
-                    ...s,
-                    messages: s.messages.map(m => ({
-                        ...m,
-                        attachments: m.attachments?.map(a => ({
-                            ...a,
-                            content: '' // STRIP CONTENT from persistence, keep name/type/tokens
-                        }))
-                    }))
-                }));
-
-                try {
-                    localStorage.setItem('chat_client_sessions', JSON.stringify(lightSessions));
-                    setStorageWarning(true);
-                } catch (e2) {
-                    console.error("Critical: Failed to save sessions even after stripping attachments.", e2);
-                    // Last resort: Don't save, prevents white screen loop
-                }
-            } else {
-                console.error("Unknown storage error", e);
-            }
-        }
-    }
-  }, [sessions]);
 
   useEffect(() => {
     localStorage.setItem('chat_client_settings', JSON.stringify(settings));
@@ -352,8 +418,6 @@ const App: React.FC = () => {
   // Specific effect to handle "Pin to Top" for new turns
   useEffect(() => {
     if (scrollToNewTurnRef.current && botTurnRef.current) {
-        // We use requestAnimationFrame and a small timeout to ensure layout (and the spacer) 
-        // is fully rendered before we attempt to scroll.
         requestAnimationFrame(() => {
              setTimeout(() => {
                 botTurnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -412,7 +476,6 @@ const App: React.FC = () => {
 
   const copyToClipboard = async (text: string, messageId: string) => {
     try {
-        // Method 1: Modern API (requires secure context or localhost)
         if (navigator.clipboard && navigator.clipboard.writeText) {
             await navigator.clipboard.writeText(text);
             setCopiedMessageId(messageId);
@@ -421,23 +484,17 @@ const App: React.FC = () => {
              throw new Error("Clipboard API unavailable");
         }
     } catch (err) {
-        // Method 2: Fallback for non-secure contexts (http)
         try {
             const textArea = document.createElement("textarea");
             textArea.value = text;
-            
-            // Ensure it's not visible but part of DOM
             textArea.style.position = "fixed";
             textArea.style.left = "-9999px";
             textArea.style.top = "0";
             document.body.appendChild(textArea);
-            
             textArea.focus();
             textArea.select();
-            
             const successful = document.execCommand('copy');
             document.body.removeChild(textArea);
-            
             if (successful) {
                 setCopiedMessageId(messageId);
                 setTimeout(() => setCopiedMessageId(null), 2000);
@@ -479,7 +536,6 @@ const App: React.FC = () => {
     setStreamingSessionId(sessionId);
     setSessionStatuses(prev => ({ ...prev, [sessionId]: 'Running' }));
 
-    // Disable auto-scroll so assistant text grows downward from a fixed top position
     shouldAutoScrollRef.current = false; 
     abortControllerRef.current = new AbortController();
 
@@ -489,7 +545,6 @@ const App: React.FC = () => {
     const updatedMessages = [...historyMessages, newUserMsg, newBotMsg];
     updateSessionMessages(sessionId, updatedMessages);
     
-    // Set flag to trigger the "Pin to Top" scroll in useEffect
     scrollToNewTurnRef.current = true;
 
     let bufferedText = "";
@@ -650,7 +705,6 @@ const App: React.FC = () => {
     const MAX_TOTAL_SIZE_MB = 100;
     const MAX_TOTAL_BYTES = MAX_TOTAL_SIZE_MB * 1024 * 1024;
     
-    // Approximate current size in bytes (Base64 is ~1.33x larger than binary, so length * 0.75 is approx binary size)
     const currentSize = attachments.reduce((acc, curr) => acc + (curr.content.length * 0.75), 0);
     const newFilesSize = files.reduce((acc, f) => acc + f.size, 0);
     
@@ -668,7 +722,6 @@ const App: React.FC = () => {
                 return;
             }
             
-            // Expanded regex for allowed text/code files
             const allowedExtensions = /\.(txt|md|markdown|json|csv|log|xml|yaml|yml|toml|ini|cfg|conf|env|js|jsx|ts|tsx|html|css|scss|less|py|java|c|cpp|h|hpp|cc|cs|go|rs|rb|php|swift|kt|sql|sh|bash|bat|ps1|dockerfile|cu|cuh)$/i;
 
             const isText = file.type.startsWith('text/') || allowedExtensions.test(file.name);
@@ -699,7 +752,6 @@ const App: React.FC = () => {
     };
 
     try {
-        // Use Promise.allSettled to ensure one failure doesn't crash everything
         const results = await Promise.allSettled(files.map(readFile));
         const successfulAttachments: FileAttachment[] = [];
         let errors: string[] = [];
@@ -709,7 +761,6 @@ const App: React.FC = () => {
                 successfulAttachments.push(result.value);
             } else {
                 if (result.reason instanceof Error) {
-                     // Filter out expected ignore messages to avoid spamming alerts
                      if (!result.reason.message.includes("ignored")) {
                          errors.push(result.reason.message);
                      } else {
@@ -726,7 +777,6 @@ const App: React.FC = () => {
         if (successfulAttachments.length > 0) {
             setAttachments(prev => {
                 const combined = [...prev, ...successfulAttachments];
-                // Filter duplicates by name to prevent key collisions
                 return combined.filter((v, i, a) => a.findIndex(t => t.name === v.name) === i);
             });
         }
@@ -737,11 +787,21 @@ const App: React.FC = () => {
     }
   };
 
-  const deleteSession = (e: React.MouseEvent, id: string) => {
+  const deleteSession = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (id === streamingSessionId) return; 
     const sessionToDelete = sessions.find(s => s.id === id);
     if (sessionToDelete && (sessionToDelete.messages.length === 0 || window.confirm("Are you sure you want to delete this chat history?"))) {
+      
+      // Cleanup IDB attachments for this session
+      for (const msg of sessionToDelete.messages) {
+          if (msg.attachments) {
+              msg.attachments.forEach((_, idx) => {
+                  deleteAttachmentFromDB(generateAttachmentKey(sessionToDelete.id, msg.id, idx));
+              });
+          }
+      }
+
       const newSessions = sessions.filter(s => s.id !== id);
       setSessions(newSessions);
       if (currentSessionId === id) { setCurrentSessionId(newSessions.length > 0 ? newSessions[0].id : null); setContextStats(null); }
@@ -751,6 +811,10 @@ const App: React.FC = () => {
   const toggleTheme = () => setSettings(prev => ({ ...prev, theme: prev.theme === 'dark' ? 'light' : 'dark' }));
 
   const currentSession = getCurrentSession();
+
+  if (!isHydrated) {
+      return <div className="flex h-screen w-full items-center justify-center bg-white dark:bg-dark-950 text-gray-500">Loading chats...</div>;
+  }
 
   return (
     <div className="flex h-screen w-full bg-white dark:bg-dark-950 text-gray-900 dark:text-gray-100 transition-colors duration-300">
@@ -798,7 +862,6 @@ const App: React.FC = () => {
 
       <div className="flex-1 flex flex-col h-full relative bg-white dark:bg-dark-950 transition-colors duration-300">
         {configError && <div className="bg-red-500 text-white text-xs p-2 text-center animate-pulse">{configError}</div>}
-        {storageWarning && <div className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-200 text-xs p-2 text-center border-b border-amber-200 dark:border-amber-800">⚠️ Storage limit reached. Some old attachments may not be saved between sessions.</div>}
         
         <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
            <span className="font-bold text-gray-900 dark:text-white">ChatClient</span>
@@ -844,7 +907,7 @@ const App: React.FC = () => {
                               {file.type.startsWith('image/') ? (
                                   file.content ? 
                                   <><img src={file.content} className="w-8 h-8 object-cover rounded border border-gray-300 dark:border-gray-700 mr-1" /><span>🖼️ {file.name}</span></> :
-                                  <span className="text-gray-400 italic">🖼️ {file.name} (not saved)</span>
+                                  <span className="text-gray-400 italic">🖼️ {file.name} (loading...)</span>
                               ) : <>📄 {file.name} <span className="text-gray-400 dark:text-gray-500 text-[10px]">({file.tokenCount}t)</span></>}
                             </span>
                          ))}
@@ -852,7 +915,7 @@ const App: React.FC = () => {
                      ) : null}
                      {msg.role === Role.User && msg.attachments?.some(a => a.type.startsWith('image/')) ? (
                         <div className="mb-4 flex flex-wrap gap-2">{msg.attachments.filter(a => a.type.startsWith('image/')).map((img, idx) => (
-                            img.content ? <img key={idx} src={img.content} className="max-w-full h-auto max-h-[300px] rounded-lg border border-gray-200 dark:border-gray-700" /> : <div key={idx} className="p-4 border border-dashed border-gray-300 dark:border-gray-700 rounded text-gray-400 text-xs">Image not available in history</div>
+                            img.content ? <img key={idx} src={img.content} className="max-w-full h-auto max-h-[300px] rounded-lg border border-gray-200 dark:border-gray-700" /> : <div key={idx} className="p-4 border border-dashed border-gray-300 dark:border-gray-700 rounded text-gray-400 text-xs animate-pulse">Loading image...</div>
                         ))}</div>
                      ) : null}
                      {msg.role === Role.Model ? (
