@@ -370,13 +370,43 @@ const App: React.FC = () => {
   };
 
   const copyToClipboard = async (text: string, messageId: string) => {
-      try {
-          await navigator.clipboard.writeText(text);
-          setCopiedMessageId(messageId);
-          setTimeout(() => setCopiedMessageId(null), 2000);
-      } catch (err) {
-          console.error("Failed to copy text: ", err);
-      }
+    try {
+        // Method 1: Modern API (requires secure context or localhost)
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            setCopiedMessageId(messageId);
+            setTimeout(() => setCopiedMessageId(null), 2000);
+        } else {
+             throw new Error("Clipboard API unavailable");
+        }
+    } catch (err) {
+        // Method 2: Fallback for non-secure contexts (http)
+        try {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            
+            // Ensure it's not visible but part of DOM
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            textArea.style.top = "0";
+            document.body.appendChild(textArea);
+            
+            textArea.focus();
+            textArea.select();
+            
+            const successful = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            
+            if (successful) {
+                setCopiedMessageId(messageId);
+                setTimeout(() => setCopiedMessageId(null), 2000);
+            } else {
+                console.error("Fallback copy failed.");
+            }
+        } catch (fallbackErr) {
+            console.error("Failed to copy text: ", fallbackErr);
+        }
+    }
   };
 
   const handleShare = () => {
