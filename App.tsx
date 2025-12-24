@@ -849,9 +849,14 @@ const App: React.FC = () => {
       
       {/* Sidebar */}
       <div className="w-64 bg-gray-50 dark:bg-dark-900 border-r border-gray-200 dark:border-dark-800 flex flex-col hidden md:flex transition-all duration-300">
-        <div className="p-4 flex items-center gap-2">
-           <div className="w-8 h-8 bg-gray-900 dark:bg-white rounded-lg flex items-center justify-center font-bold text-white dark:text-black shadow-sm">C</div>
-           <span className="font-bold text-lg tracking-tight text-gray-900 dark:text-gray-100">ChatClient</span>
+        <div className="p-4 flex items-center gap-3 mb-2">
+           <div className="w-10 h-10 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl flex items-center justify-center shadow-lg ring-1 ring-white/10">
+               <span className="text-white font-bold text-xl">C</span>
+           </div>
+           <div>
+               <h1 className="font-bold text-xl tracking-tight text-gray-900 dark:text-white leading-none">ChatClient</h1>
+               <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 uppercase tracking-widest">Rust Edition</span>
+           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
           <button onClick={() => createNewSession()} disabled={isStreaming} className={`w-full flex items-center justify-center gap-2 px-4 py-3 bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 text-gray-900 dark:text-gray-100 rounded-xl transition-all text-sm font-medium shadow-sm mb-4 group ${isStreaming ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-dark-700'}`}>
@@ -892,7 +897,10 @@ const App: React.FC = () => {
         {configError && <div className="bg-red-500 text-white text-xs p-2 text-center animate-pulse">{configError}</div>}
         
         <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
-           <span className="font-bold text-gray-900 dark:text-white">ChatClient</span>
+           <div className="flex items-center gap-2">
+                <div className="w-8 h-8 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-lg flex items-center justify-center text-white font-bold">C</div>
+                <span className="font-bold text-gray-900 dark:text-white">ChatClient</span>
+           </div>
            <div className="flex gap-4">
               <button onClick={toggleTheme} className="text-gray-600 dark:text-gray-400">{settings.theme === 'dark' ? <SunIcon /> : <MoonIcon />}</button>
               <button onClick={() => setIsSettingsOpen(true)} className="text-gray-600 dark:text-gray-400"><SettingsIcon /></button>
@@ -903,7 +911,7 @@ const App: React.FC = () => {
         <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
           {!currentSession || currentSession.messages.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
-                <div className="w-20 h-20 mb-6 rounded-2xl bg-gray-100 dark:bg-dark-900 flex items-center justify-center"><div className="text-gray-300 dark:text-gray-700"><BotIcon /></div></div>
+                <div className="w-24 h-24 mb-6 rounded-3xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg"><div className="text-white"><BotIcon className="w-12 h-12" /></div></div>
                 <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-200 mb-2">{t.welcomeTitle}</h3>
                 <p className="text-center max-w-md text-gray-500 dark:text-gray-500">{t.welcomeSubtitle}{isMultimodal && <span className="block mt-2 text-indigo-500 text-sm">{t.imageUploadEnabled}</span>}</p>
              </div>
@@ -922,8 +930,12 @@ const App: React.FC = () => {
                 ref={isAssistantActiveTurn ? botTurnRef : null}
                 className={`scroll-mt-4 flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}
               >
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-1 border border-gray-200 dark:border-gray-700 ${msg.role === Role.User ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 shadow-sm'}`}>
-                  {msg.role === Role.User ? <UserIcon /> : <BotIcon />}
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm ${
+                    msg.role === Role.User 
+                    ? 'bg-gradient-to-br from-blue-600 to-cyan-500 text-white' 
+                    : `bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 text-white ${isWaitingForFirstToken || (isStreaming && index === currentSession.messages.length - 1) ? 'animate-pulse ring-2 ring-pink-300 dark:ring-pink-900' : ''}`
+                }`}>
+                  {msg.role === Role.User ? <UserIcon className="w-6 h-6 text-white" /> : <BotIcon className="w-6 h-6 text-white" />}
                 </div>
                 <div className={`flex flex-col max-w-[85%] lg:max-w-[75%] ${msg.role === Role.User ? 'items-end' : 'items-start'}`}>
                    <div className="flex items-center gap-2 mb-1 px-1"><span className="text-xs font-semibold text-gray-500 dark:text-gray-400">{msg.role === Role.User ? 'You' : 'ChatClient'}</span></div>
