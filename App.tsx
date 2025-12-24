@@ -867,7 +867,7 @@ const App: React.FC = () => {
       {/* Sidebar */}
       <div className="w-64 bg-gray-50 dark:bg-dark-900 border-r border-gray-200 dark:border-dark-800 flex flex-col hidden md:flex transition-all duration-300">
         <div className="p-4 flex items-center gap-3 mb-2">
-           <div className="w-10 h-10 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center shadow-md text-white font-bold text-xl">
+           <div className="w-10 h-10 bg-black dark:bg-white rounded-xl flex items-center justify-center shadow-md text-white dark:text-black font-bold text-xl">
                <span>C</span>
            </div>
            <div>
@@ -914,7 +914,7 @@ const App: React.FC = () => {
         
         <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
            <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-lg flex items-center justify-center text-white font-bold">C</div>
+                <div className="w-8 h-8 bg-black dark:bg-white rounded-lg flex items-center justify-center text-white dark:text-black font-bold">C</div>
                 <span className="font-bold text-gray-900 dark:text-white">ChatClient</span>
            </div>
            <div className="flex gap-4">
@@ -927,7 +927,7 @@ const App: React.FC = () => {
         <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
           {!currentSession || currentSession.messages.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
-                <div className="w-24 h-24 mb-6 rounded-3xl bg-gradient-to-br from-indigo-100 to-purple-100 dark:from-indigo-900/40 dark:to-purple-900/40 flex items-center justify-center shadow-sm"><div className="text-indigo-500 dark:text-indigo-300"><BotIcon className="w-12 h-12" /></div></div>
+                <div className="w-24 h-24 mb-6 rounded-3xl bg-gray-100 dark:bg-dark-900 flex items-center justify-center shadow-sm"><div className="text-gray-900 dark:text-white"><BotIcon className="w-12 h-12" /></div></div>
                 <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-200 mb-2">{t.welcomeTitle}</h3>
                 <p className="text-center max-w-md text-gray-500 dark:text-gray-500">{t.welcomeSubtitle}{isMultimodal && <span className="block mt-2 text-indigo-500 text-sm">{t.imageUploadEnabled}</span>}</p>
              </div>
@@ -948,8 +948,8 @@ const App: React.FC = () => {
               >
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm transition-all duration-300 ${
                     msg.role === Role.User 
-                    ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300' 
-                    : `bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-300 ${isWaitingForFirstToken || (isStreaming && index === currentSession.messages.length - 1) ? 'ring-2 ring-orange-200 dark:ring-orange-800 animate-pulse' : ''}`
+                    ? 'bg-gray-100 dark:bg-dark-800 text-gray-500 dark:text-gray-400' 
+                    : `bg-black dark:bg-white text-white dark:text-black ${isWaitingForFirstToken || (isStreaming && index === currentSession.messages.length - 1) ? 'ring-2 ring-gray-200 dark:ring-gray-700 animate-pulse' : ''}`
                 }`}>
                   {msg.role === Role.User ? <UserIcon className="w-6 h-6" /> : <BotIcon className="w-6 h-6" />}
                 </div>
@@ -1003,8 +1003,8 @@ const App: React.FC = () => {
             )})
           )}
           <div ref={messagesEndRef} className="h-4" />
-          {/* Reduced Spacer to prevent excessive blank area */}
-          <div className="h-32 md:h-48 shrink-0" aria-hidden="true" />
+          {/* Restored Large Spacer to ensure slide-up focus works correctly */}
+          <div className="h-[80vh] shrink-0" aria-hidden="true" />
         </div>
 
         {/* Input Area */}
