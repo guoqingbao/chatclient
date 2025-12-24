@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism/one-dark';
+import oneDark from 'react-syntax-highlighter/dist/esm/styles/prism/one-dark';
 import { CopyIcon, CheckIcon } from './Icon';
 
 interface CodeBlockProps {
