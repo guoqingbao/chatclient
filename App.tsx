@@ -8,9 +8,11 @@ import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount,
 import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon, FinishedIcon, ImageIcon, CheckIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 import { saveAttachmentToDB, getAttachmentFromDB, pruneOrphanedAttachments, deleteAttachmentFromDB } from './services/db';
+import { translations, Language } from './utils/translations';
 
-const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
+const ThinkingProcess = ({ thought, isComplete, isTruncated, lang }: { thought: string, isComplete: boolean, isTruncated: boolean, lang: Language }) => {
   const [isOpen, setIsOpen] = useState(!isComplete || isTruncated);
+  const t = translations[lang];
 
   useEffect(() => {
     if (isComplete && !isTruncated) {
@@ -25,8 +27,8 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string
           <div className="mb-4 p-3 border-l-4 border-amber-400 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-600 rounded-r-md text-sm text-amber-800 dark:text-amber-200 flex items-start gap-3 shadow-sm animate-in fade-in slide-in-from-top-1">
              <span className="text-lg leading-none mt-0.5">⚠️</span>
              <div className="flex flex-col">
-                 <span className="font-semibold">Thinking Process Truncated</span>
-                 <span className="text-xs opacity-90">The thought process was interrupted. The partial content has been displayed below.</span>
+                 <span className="font-semibold">{t.thinkingTruncatedTitle}</span>
+                 <span className="text-xs opacity-90">{t.thinkingTruncatedDesc}</span>
              </div>
           </div>
       );
@@ -42,14 +44,14 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string
             {isOpen ? '▾' : '▸'}
         </span>
         {isComplete ? (
-          <span>Thought Process</span>
+          <span>{t.thoughtProcess}</span>
         ) : isTruncated ? (
           <span className="text-amber-600 dark:text-amber-500 flex items-center gap-1">
-            Thought Process (Interrupted)
+            {t.thoughtProcessInterrupted}
           </span>
         ) : (
           <span className="animate-pulse flex items-center gap-1">
-            Thinking<span className="animate-bounce">.</span><span className="animate-bounce delay-75">.</span><span className="animate-bounce delay-150">.</span>
+            {t.thinking}<span className="animate-bounce">.</span><span className="animate-bounce delay-75">.</span><span className="animate-bounce delay-150">.</span>
           </span>
         )}
       </button>
@@ -59,7 +61,7 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string
           {thought}
           {isTruncated && (
              <div className="mt-3 pt-2 border-t border-amber-200 dark:border-amber-900/30 text-amber-600 dark:text-amber-500 text-xs italic flex items-center gap-1">
-                ⚠️ Thinking process was truncated unexpectedly.
+                {t.thinkingTruncatedWarning}
              </div>
           )}
         </div>
@@ -72,14 +74,17 @@ const EditMessageModal = ({
   isOpen, 
   onClose, 
   initialText, 
-  onConfirm 
+  onConfirm,
+  lang
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
   initialText: string; 
-  onConfirm: (newText: string) => void; 
+  onConfirm: (newText: string) => void;
+  lang: Language; 
 }) => {
   const [text, setText] = useState(initialText);
+  const t = translations[lang];
 
   useEffect(() => {
     if (isOpen) setText(initialText);
@@ -91,7 +96,7 @@ const EditMessageModal = ({
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm p-4">
       <div className="bg-white dark:bg-dark-900 rounded-xl shadow-2xl w-full max-w-2xl border border-gray-200 dark:border-dark-800 flex flex-col">
         <div className="p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Edit Message</h3>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t.editMessageTitle}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
         </div>
         <div className="p-4 flex-1">
@@ -101,7 +106,7 @@ const EditMessageModal = ({
             onChange={(e) => setText(e.target.value)}
           />
           <p className="text-xs text-gray-500 mt-2">
-            Editing this message will clear all subsequent messages in this conversation.
+            {t.editMessageWarning}
           </p>
         </div>
         <div className="p-4 border-t border-gray-200 dark:border-dark-800 flex justify-end gap-3">
@@ -109,13 +114,13 @@ const EditMessageModal = ({
             onClick={onClose}
             className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-800 rounded-lg transition-colors"
           >
-            Cancel
+            {t.cancel}
           </button>
           <button 
             onClick={() => onConfirm(text)}
             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium"
           >
-            Send & Restart
+            {t.sendAndRestart}
           </button>
         </div>
       </div>
@@ -163,6 +168,10 @@ const App: React.FC = () => {
   const [swapStats, setSwapStats] = useState<{used: number, total: number} | null>(null);
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionStatus>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+
+  // --- TRANSLATION SETUP ---
+  const lang: Language = (settings.language === 'zh' || settings.language === 'en') ? settings.language : 'en';
+  const t = translations[lang];
 
   // --- REFS ---
   const usageFailuresRef = useRef(0);
@@ -301,7 +310,8 @@ const App: React.FC = () => {
             attempts++;
             if (attempts < maxAttempts) setTimeout(loadConfig, 2000);
             else {
-                setConfigError(`Unable to obtain server config automatically. Using default: ${DEFAULT_SETTINGS.serverUrl}`);
+                // We use default language messages here as settings might not be loaded fully, but t is available
+                setConfigError(t.serverConfigError.replace('{url}', DEFAULT_SETTINGS.serverUrl));
                 setTimeout(() => setConfigError(null), 60000);
             }
         }
@@ -310,7 +320,7 @@ const App: React.FC = () => {
     if (hostConfig) {
        setSettings(prev => ({ ...prev, model: hostConfig.defaultModel || prev.model, theme: hostConfig.initialTheme || prev.theme, serverUrl: hostConfig.serverUrl || prev.serverUrl, apiKey: hostConfig.apiKey || prev.apiKey }));
     } else loadConfig();
-  }, []);
+  }, [t.serverConfigError]);
 
   useEffect(() => {
     const validateAndCheckCapabilities = async () => {
@@ -450,7 +460,7 @@ const App: React.FC = () => {
 
   const createNewSession = () => {
     if (isStreaming) return null;
-    const newSession: ChatSession = { id: uuidv4(), title: 'New Chat', messages: [], lastUpdated: Date.now() };
+    const newSession: ChatSession = { id: uuidv4(), title: t.newChat, messages: [], lastUpdated: Date.now() };
     setSessions(prev => [newSession, ...prev]);
     setCurrentSessionId(newSession.id);
     setContextStats(null);
@@ -500,9 +510,11 @@ const App: React.FC = () => {
                 setTimeout(() => setCopiedMessageId(null), 2000);
             } else {
                 console.error("Fallback copy failed.");
+                alert(t.copyFallbackFailed);
             }
         } catch (fallbackErr) {
             console.error("Failed to copy text: ", fallbackErr);
+            alert(t.copyFallbackFailed);
         }
     }
   };
@@ -636,7 +648,7 @@ const App: React.FC = () => {
     if (settings.contextCache && contextStats && contextStats.total > 0) {
         const availableTokens = contextStats.total - contextStats.used;
         if (newMessageTokens > availableTokens) {
-             alert(`Message blocked: Estimated token usage (${newMessageTokens}) exceeds remaining context space (${availableTokens}). Please start a new chat or shorten context.`);
+             alert(t.messageBlockedContext.replace('{used}', newMessageTokens.toString()).replace('{available}', availableTokens.toString()));
              return;
         }
     } else {
@@ -644,7 +656,10 @@ const App: React.FC = () => {
         currentHistory.forEach(m => { totalSessionTokens += estimateTokenCount(m.text); m.attachments?.forEach(a => totalSessionTokens += (a.tokenCount || 0)); });
         totalSessionTokens += newMessageTokens;
         const fallbackLimit = settings.maxOutputTokens * 1.5;
-        if (totalSessionTokens > fallbackLimit) { alert(`Message blocked: Estimated conversation tokens (${totalSessionTokens}) exceeds fallback limit (${fallbackLimit}). Please start a new chat.`); return; }
+        if (totalSessionTokens > fallbackLimit) { 
+             alert(t.messageBlockedFallback.replace('{total}', totalSessionTokens.toString()).replace('{limit}', fallbackLimit.toString()));
+             return; 
+        }
     }
     const textToSend = input;
     const attachmentsToSend = attachments;
@@ -709,7 +724,7 @@ const App: React.FC = () => {
     const newFilesSize = files.reduce((acc, f) => acc + f.size, 0);
     
     if (currentSize + newFilesSize > MAX_TOTAL_BYTES) {
-        alert(`Upload blocked: Total attachment size would exceed ${MAX_TOTAL_SIZE_MB}MB limit.`);
+        alert(t.uploadBlockedSize);
         if (fileInputRef.current) fileInputRef.current.value = '';
         return;
     }
@@ -718,7 +733,7 @@ const App: React.FC = () => {
         return new Promise((resolve, reject) => {
             const isImage = file.type.startsWith('image/');
             if (isImage && !isMultimodal) {
-                reject(new Error(`Image upload ignored. Current model "${settings.model}" does not support images.`));
+                reject(new Error(t.imageUploadIgnored));
                 return;
             }
             
@@ -727,7 +742,7 @@ const App: React.FC = () => {
             const isText = file.type.startsWith('text/') || allowedExtensions.test(file.name);
             
             if (!isText && !isImage) {
-                reject(new Error(`File "${file.name}" ignored. Unsupported file type.`));
+                reject(new Error(t.fileIgnored));
                 return;
             }
 
@@ -771,7 +786,7 @@ const App: React.FC = () => {
         });
         
         if (errors.length > 0) {
-            alert(`Some files could not be uploaded:\n${errors.slice(0, 3).join('\n')}`);
+            alert(`${t.uploadError}:\n${errors.slice(0, 3).join('\n')}`);
         }
 
         if (successfulAttachments.length > 0) {
@@ -828,19 +843,19 @@ const App: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
           <button onClick={() => createNewSession()} disabled={isStreaming} className={`w-full flex items-center justify-center gap-2 px-4 py-3 bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 text-gray-900 dark:text-gray-100 rounded-xl transition-all text-sm font-medium shadow-sm mb-4 group ${isStreaming ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-dark-700'}`}>
             <span className="text-xl leading-none font-light text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">+</span> 
-            <span>New Chat</span>
+            <span>{t.newChat}</span>
           </button>
-          <div className="text-xs font-bold text-gray-400 uppercase tracking-wider px-3 mb-2 mt-6">History</div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wider px-3 mb-2 mt-6">{t.history}</div>
           {sessions.map(session => (
             <div key={session.id} onClick={() => { setCurrentSessionId(session.id); setContextStats(null); }} className={`group relative flex items-center px-3 py-2.5 text-sm rounded-lg transition-all cursor-pointer ${currentSessionId === session.id ? 'bg-gray-200 dark:bg-dark-800 text-gray-900 dark:text-white font-medium shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-dark-800'}`}>
               <span className="truncate flex-1 pr-6">{session.title}</span>
               <div className="absolute right-2 flex items-center gap-1">
                  {streamingSessionId === session.id ? <div className="text-indigo-500"><WritingIcon /></div> : (
                     <>
-                        {sessionStatuses[session.id] === 'Waiting' && <WaitingIcon />}
-                        {sessionStatuses[session.id] === 'Cached' && <CachedIcon />}
-                        {sessionStatuses[session.id] === 'Swapped' && <SwappedIcon />}
-                        {sessionStatuses[session.id] === 'Finished' && <FinishedIcon />}
+                        {sessionStatuses[session.id] === 'Waiting' && <div title={t.status_waiting}><WaitingIcon /></div>}
+                        {sessionStatuses[session.id] === 'Cached' && <div title={t.status_cached}><CachedIcon /></div>}
+                        {sessionStatuses[session.id] === 'Swapped' && <div title={t.status_swapped}><SwappedIcon /></div>}
+                        {sessionStatuses[session.id] === 'Finished' && <div title={t.status_finished}><FinishedIcon /></div>}
                     </>
                  )}
                  {streamingSessionId !== session.id && <button onClick={(e) => deleteSession(e, session.id)} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity ml-1">×</button>}
@@ -851,11 +866,11 @@ const App: React.FC = () => {
         <div className="p-4 border-t border-gray-200 dark:border-dark-800 space-y-1">
           <button onClick={toggleTheme} className="flex items-center gap-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors text-sm w-full px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-dark-800">
             {settings.theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-            <span>{settings.theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+            <span>{settings.theme === 'dark' ? t.lightMode : t.darkMode}</span>
           </button>
           <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors text-sm w-full px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-dark-800">
             <SettingsIcon />
-            <span>Settings</span>
+            <span>{t.settings}</span>
           </button>
         </div>
       </div>
@@ -876,8 +891,8 @@ const App: React.FC = () => {
           {!currentSession || currentSession.messages.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
                 <div className="w-20 h-20 mb-6 rounded-2xl bg-gray-100 dark:bg-dark-900 flex items-center justify-center"><div className="text-gray-300 dark:text-gray-700"><BotIcon /></div></div>
-                <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-200 mb-2">Welcome to ChatClient</h3>
-                <p className="text-center max-w-md text-gray-500 dark:text-gray-500">Start a conversation by typing a message or uploading a file below.{isMultimodal && <span className="block mt-2 text-indigo-500 text-sm">✨ Image upload enabled for this model</span>}</p>
+                <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-200 mb-2">{t.welcomeTitle}</h3>
+                <p className="text-center max-w-md text-gray-500 dark:text-gray-500">{t.welcomeSubtitle}{isMultimodal && <span className="block mt-2 text-indigo-500 text-sm">{t.imageUploadEnabled}</span>}</p>
              </div>
           ) : (
             currentSession.messages.map((msg, index) => {
@@ -921,22 +936,22 @@ const App: React.FC = () => {
                      {msg.role === Role.Model ? (
                         <div className="markdown-body">
                            {isWaitingForFirstToken && <div className="flex items-center gap-1 h-6"><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div></div>}
-                           {contentParts?.hasThought && <ThinkingProcess thought={isThinkingTruncated ? "" : contentParts.thought} isComplete={contentParts.isComplete} isTruncated={!!isThinkingTruncated} />}
+                           {contentParts?.hasThought && <ThinkingProcess thought={isThinkingTruncated ? "" : contentParts.thought} isComplete={contentParts.isComplete} isTruncated={!!isThinkingTruncated} lang={lang} />}
                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{isThinkingTruncated ? (contentParts.thought + "\n\n" + contentParts.mainContent) : (contentParts ? contentParts.mainContent : msg.text)}</ReactMarkdown>
                         </div>
                      ) : <div className="whitespace-pre-wrap">{msg.text}</div>}
                    </div>
                    {msg.role === Role.Model && !isStreaming && !msg.isError && (
                       <div className="flex items-center gap-3 mt-2 px-1 justify-start">
-                            <button onClick={() => handleResend(index)} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><RefreshIcon /> Redo</button>
+                            <button onClick={() => handleResend(index)} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><RefreshIcon /> {t.redo}</button>
                             <button onClick={() => copyToClipboard(msg.text, msg.id)} className={`text-xs font-medium flex items-center gap-1.5 transition-colors px-1 ${copiedMessageId === msg.id ? 'text-green-600 dark:text-green-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}>
                                 {copiedMessageId === msg.id ? <CheckIcon /> : <CopyIcon />} 
-                                {copiedMessageId === msg.id ? 'Copied!' : 'Copy'}
+                                {copiedMessageId === msg.id ? t.copied : t.copy}
                             </button>
-                            <button onClick={handleShare} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><ShareIcon /> Share</button>
+                            <button onClick={handleShare} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><ShareIcon /> {t.share}</button>
                        </div>
                    )}
-                   {msg.role === Role.User && !isStreaming && <div className="flex items-center gap-3 mt-2 px-1 justify-end"><button onClick={() => openEditModal(index)} className="text-xs font-medium text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1 transition-colors bg-gray-50 dark:bg-dark-900 px-2 py-1 rounded"><EditIcon /> Edit</button></div>}
+                   {msg.role === Role.User && !isStreaming && <div className="flex items-center gap-3 mt-2 px-1 justify-end"><button onClick={() => openEditModal(index)} className="text-xs font-medium text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1 transition-colors bg-gray-50 dark:bg-dark-900 px-2 py-1 rounded"><EditIcon /> {t.edit}</button></div>}
                 </div>
               </div>
             )})
@@ -964,26 +979,26 @@ const App: React.FC = () => {
               <div className="relative flex items-end gap-2 bg-gray-50 dark:bg-dark-900 border border-gray-300 dark:border-dark-700 rounded-3xl shadow-sm focus-within:shadow-md focus-within:border-gray-400 dark:focus-within:border-gray-500 transition-all p-2">
                  <button onClick={() => fileInputRef.current?.click()} disabled={isStreaming} className="p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors rounded-full hover:bg-gray-200 dark:hover:bg-dark-800 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">{isMultimodal ? <ImageIcon /> : <PaperClipIcon />}</button>
                  <input type="file" multiple ref={fileInputRef} className="hidden" accept=".txt,.md,.markdown,.json,.csv,.log,.xml,.yaml,.yml,.toml,.ini,.cfg,.conf,.env,.js,.jsx,.ts,.tsx,.html,.css,.scss,.less,.py,.java,.c,.cpp,.h,.hpp,.cc,.cs,.go,.rs,.rb,.php,.swift,.kt,.sql,.sh,.bash,.bat,.ps1,.dockerfile,.cu,.cuh,image/*" onChange={handleFileUpload} />
-                 <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)} disabled={isStreaming} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }} placeholder={isStreaming ? "Wait for response..." : "Message ChatClient..."} className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none py-3 px-4 max-h-[200px] min-h-[24px] leading-6 custom-scrollbar disabled:cursor-not-allowed" rows={1} />
-                 {isStreaming && currentSessionId === streamingSessionId ? <button onClick={handleStopGeneration} className="p-2 mb-1 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors animate-pulse flex-shrink-0"><StopIcon /></button> : <button onClick={() => handleSendMessage()} disabled={!input.trim() && attachments.length === 0} className={`p-2 mb-1 rounded-full transition-colors shadow-md flex-shrink-0 ${isStreaming ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-gray-900 dark:bg-white text-white dark:text-black hover:bg-gray-700 dark:hover:bg-gray-200'}`}><SendIcon /></button>}
+                 <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)} disabled={isStreaming} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }} placeholder={isStreaming ? t.waitingPlaceholder : t.messagePlaceholder} className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none py-3 px-4 max-h-[200px] min-h-[24px] leading-6 custom-scrollbar disabled:cursor-not-allowed" rows={1} />
+                 {isStreaming && currentSessionId === streamingSessionId ? <button onClick={handleStopGeneration} title={t.stopGeneration} className="p-2 mb-1 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors animate-pulse flex-shrink-0"><StopIcon /></button> : <button onClick={() => handleSendMessage()} disabled={!input.trim() && attachments.length === 0} className={`p-2 mb-1 rounded-full transition-colors shadow-md flex-shrink-0 ${isStreaming ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-gray-900 dark:bg-white text-white dark:text-black hover:bg-gray-700 dark:hover:bg-gray-200'}`}><SendIcon /></button>}
               </div>
               <div className="flex flex-col items-center mt-3 gap-1">
                  {settings.contextCache && (contextStats || kvStats || swapStats) && (
                     <div className="flex items-center gap-3 px-3 py-1 rounded-full bg-gray-100 dark:bg-dark-900 border border-gray-200 dark:border-dark-800 text-[10px] font-mono text-gray-500 dark:text-gray-400 animate-in fade-in slide-in-from-bottom-2">
-                        {contextStats?.status && <div className="flex items-center pr-1">{contextStats.status === 'Running' ? <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" /> : contextStats.status === 'Waiting' ? <WaitingIcon /> : contextStats.status === 'Cached' ? <CachedIcon /> : contextStats.status === 'Swapped' ? <SwappedIcon /> : <FinishedIcon />}</div>}
+                        {contextStats?.status && <div className="flex items-center pr-1">{contextStats.status === 'Running' ? <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title={t.status_running} /> : contextStats.status === 'Waiting' ? <div title={t.status_waiting}><WaitingIcon /></div> : contextStats.status === 'Cached' ? <div title={t.status_cached}><CachedIcon /></div> : contextStats.status === 'Swapped' ? <div title={t.status_swapped}><SwappedIcon /></div> : <div title={t.status_finished}><FinishedIcon /></div>}</div>}
                         {contextStats && <div className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${contextStats.used > contextStats.total * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span><span>CTX: {contextStats.used.toLocaleString()} / {contextStats.total.toLocaleString()}</span></div>}
                         {contextStats && (kvStats || swapStats) && <div className="w-px h-3 bg-gray-300 dark:bg-dark-700"></div>}
                         {kvStats && <div className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${kvStats.used > kvStats.total * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span><span>KV: {kvStats.used.toLocaleString()} / {kvStats.total.toLocaleString()}</span></div>}
                         {swapStats && swapStats.total >= 0.2 && <><div className="w-px h-3 bg-gray-300 dark:bg-dark-700"></div><div className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${swapStats.used > swapStats.total * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span><span>Swap: {swapStats.used.toFixed(1)} / {swapStats.total.toFixed(1)} GB</span></div></>}
                     </div>
                  )}
-                 <p className="text-[10px] text-gray-400 dark:text-gray-600">AI can make mistakes. Please verify important information.</p>
+                 <p className="text-[10px] text-gray-400 dark:text-gray-600">{t.disclaimer}</p>
               </div>
            </div>
         </div>
       </div>
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onSettingsChange={setSettings} useSampling={useSampling} onSamplingToggle={setUseSampling} />
-      <EditMessageModal isOpen={!!editingMessage} onClose={() => setEditingMessage(null)} initialText={editingMessage?.text || ''} onConfirm={handleConfirmEdit} />
+      <EditMessageModal isOpen={!!editingMessage} onClose={() => setEditingMessage(null)} initialText={editingMessage?.text || ''} onConfirm={handleConfirmEdit} lang={lang} />
     </div>
   );
 };
