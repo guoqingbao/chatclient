@@ -7,6 +7,7 @@ import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachme
 import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig, fetchModelCapabilities, fetchAvailableModels } from './services/geminiService';
 import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon, FinishedIcon, ImageIcon, CheckIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
+import CodeBlock from './components/CodeBlock';
 import { saveAttachmentToDB, getAttachmentFromDB, pruneOrphanedAttachments, deleteAttachmentFromDB } from './services/db';
 import { translations, Language } from './utils/translations';
 
@@ -949,7 +950,24 @@ const App: React.FC = () => {
                         <div className="markdown-body">
                            {isWaitingForFirstToken && <div className="flex items-center gap-1 h-6"><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div></div>}
                            {contentParts?.hasThought && <ThinkingProcess thought={isThinkingTruncated ? "" : contentParts.thought} isComplete={contentParts.isComplete} isTruncated={!!isThinkingTruncated} lang={lang} />}
-                           <ReactMarkdown remarkPlugins={[remarkGfm]}>{isThinkingTruncated ? (contentParts.thought + "\n\n" + contentParts.mainContent) : (contentParts ? contentParts.mainContent : msg.text)}</ReactMarkdown>
+                           <ReactMarkdown 
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                code(props) {
+                                  const {children, className, node, ...rest} = props
+                                  const match = /language-(\w+)/.exec(className || '')
+                                  return match ? (
+                                    <CodeBlock language={match[1]} value={String(children).replace(/\n$/, '')} />
+                                  ) : (
+                                    <code {...rest} className={className}>
+                                      {children}
+                                    </code>
+                                  )
+                                }
+                              }}
+                           >
+                              {isThinkingTruncated ? (contentParts.thought + "\n\n" + contentParts.mainContent) : (contentParts ? contentParts.mainContent : msg.text)}
+                           </ReactMarkdown>
                         </div>
                      ) : <div className="whitespace-pre-wrap">{msg.text}</div>}
                    </div>
