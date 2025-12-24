@@ -124,11 +124,17 @@ const EditMessageModal = ({
 
 const App: React.FC = () => {
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
-    const stored = localStorage.getItem('chat_client_sessions');
-    return stored ? JSON.parse(stored) : [];
+    try {
+        const stored = localStorage.getItem('chat_client_sessions');
+        return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+        console.error("Failed to load sessions", e);
+        return [];
+    }
   });
 
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [storageWarning, setStorageWarning] = useState<boolean>(false);
   
   const [settings, setSettings] = useState<AppSettings>(() => {
     const stored = localStorage.getItem('chat_client_settings');
@@ -221,9 +227,44 @@ const App: React.FC = () => {
     else if (sessions.length === 0) createNewSession();
   }, []);
 
+  // SAFE STORAGE LOGIC
   useEffect(() => {
     sessionsRef.current = sessions;
-    if (sessions.length > 0) localStorage.setItem('chat_client_sessions', JSON.stringify(sessions));
+    if (sessions.length > 0) {
+        try {
+            // Attempt full save
+            localStorage.setItem('chat_client_sessions', JSON.stringify(sessions));
+            setStorageWarning(false);
+        } catch (e: any) {
+            // Check for QuotaExceededError (name can vary by browser)
+            if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22) {
+                console.warn("Storage quota exceeded. Stripping attachment content to save chat history.");
+                
+                // Create a "light" version of sessions for storage
+                // We keep text metadata but remove the heavy base64 content
+                const lightSessions = sessions.map(s => ({
+                    ...s,
+                    messages: s.messages.map(m => ({
+                        ...m,
+                        attachments: m.attachments?.map(a => ({
+                            ...a,
+                            content: '' // STRIP CONTENT from persistence, keep name/type/tokens
+                        }))
+                    }))
+                }));
+
+                try {
+                    localStorage.setItem('chat_client_sessions', JSON.stringify(lightSessions));
+                    setStorageWarning(true);
+                } catch (e2) {
+                    console.error("Critical: Failed to save sessions even after stripping attachments.", e2);
+                    // Last resort: Don't save, prevents white screen loop
+                }
+            } else {
+                console.error("Unknown storage error", e);
+            }
+        }
+    }
   }, [sessions]);
 
   useEffect(() => {
@@ -757,6 +798,8 @@ const App: React.FC = () => {
 
       <div className="flex-1 flex flex-col h-full relative bg-white dark:bg-dark-950 transition-colors duration-300">
         {configError && <div className="bg-red-500 text-white text-xs p-2 text-center animate-pulse">{configError}</div>}
+        {storageWarning && <div className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-200 text-xs p-2 text-center border-b border-amber-200 dark:border-amber-800">⚠️ Storage limit reached. Some old attachments may not be saved between sessions.</div>}
+        
         <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
            <span className="font-bold text-gray-900 dark:text-white">ChatClient</span>
            <div className="flex gap-4">
@@ -798,13 +841,19 @@ const App: React.FC = () => {
                        <div className="mb-3 pb-2 border-b border-gray-200 dark:border-gray-700 text-xs flex flex-wrap gap-2">
                          {msg.attachments.map((file, i) => (
                             <span key={i} className="flex items-center gap-1 bg-white dark:bg-dark-900 px-2 py-1 rounded border border-gray-200 dark:border-dark-700">
-                              {file.type.startsWith('image/') ? <><img src={file.content} className="w-8 h-8 object-cover rounded border border-gray-300 dark:border-gray-700 mr-1" /><span>🖼️ {file.name}</span></> : <>📄 {file.name} <span className="text-gray-400 dark:text-gray-500 text-[10px]">({file.tokenCount}t)</span></>}
+                              {file.type.startsWith('image/') ? (
+                                  file.content ? 
+                                  <><img src={file.content} className="w-8 h-8 object-cover rounded border border-gray-300 dark:border-gray-700 mr-1" /><span>🖼️ {file.name}</span></> :
+                                  <span className="text-gray-400 italic">🖼️ {file.name} (not saved)</span>
+                              ) : <>📄 {file.name} <span className="text-gray-400 dark:text-gray-500 text-[10px]">({file.tokenCount}t)</span></>}
                             </span>
                          ))}
                        </div>
                      ) : null}
                      {msg.role === Role.User && msg.attachments?.some(a => a.type.startsWith('image/')) ? (
-                        <div className="mb-4 flex flex-wrap gap-2">{msg.attachments.filter(a => a.type.startsWith('image/')).map((img, idx) => (<img key={idx} src={img.content} className="max-w-full h-auto max-h-[300px] rounded-lg border border-gray-200 dark:border-gray-700" />))}</div>
+                        <div className="mb-4 flex flex-wrap gap-2">{msg.attachments.filter(a => a.type.startsWith('image/')).map((img, idx) => (
+                            img.content ? <img key={idx} src={img.content} className="max-w-full h-auto max-h-[300px] rounded-lg border border-gray-200 dark:border-gray-700" /> : <div key={idx} className="p-4 border border-dashed border-gray-300 dark:border-gray-700 rounded text-gray-400 text-xs">Image not available in history</div>
+                        ))}</div>
                      ) : null}
                      {msg.role === Role.Model ? (
                         <div className="markdown-body">
