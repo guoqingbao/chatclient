@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage, SessionStatus } from './types';
 import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig, fetchModelCapabilities, fetchAvailableModels } from './services/geminiService';
-import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon, FinishedIcon, ImageIcon } from './components/Icon';
+import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon, FinishedIcon, ImageIcon, CheckIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 
 const ThinkingProcess = ({ thought, isComplete, isTruncated }: { thought: string, isComplete: boolean, isTruncated: boolean }) => {
@@ -157,6 +157,7 @@ const App: React.FC = () => {
   const [kvStats, setKvStats] = useState<{used: number, total: number} | null>(null);
   const [swapStats, setSwapStats] = useState<{used: number, total: number} | null>(null);
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionStatus>>({});
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
   const usageFailuresRef = useRef(0);
   const sessionsRef = useRef(sessions);
@@ -368,7 +369,15 @@ const App: React.FC = () => {
     }));
   };
 
-  const copyToClipboard = (text: string) => navigator.clipboard.writeText(text);
+  const copyToClipboard = async (text: string, messageId: string) => {
+      try {
+          await navigator.clipboard.writeText(text);
+          setCopiedMessageId(messageId);
+          setTimeout(() => setCopiedMessageId(null), 2000);
+      } catch (err) {
+          console.error("Failed to copy text: ", err);
+      }
+  };
 
   const handleShare = () => {
     const session = getCurrentSession();
@@ -588,9 +597,13 @@ const App: React.FC = () => {
                 return;
             }
             
-            const isText = file.type.startsWith('text/') || file.name.match(/\.(js|jsx|ts|tsx|rs|py|c|cpp|h|java|go|rb|php|html|css|json|md|yaml|toml|sh|bat|sql|xml|txt)$/i);
+            // Expanded regex for allowed text/code files
+            const allowedExtensions = /\.(txt|md|markdown|json|csv|log|xml|yaml|yml|toml|ini|cfg|conf|env|js|jsx|ts|tsx|html|css|scss|less|py|java|c|cpp|h|hpp|cc|cs|go|rs|rb|php|swift|kt|sql|sh|bash|bat|ps1|dockerfile|cu|cuh)$/i;
+
+            const isText = file.type.startsWith('text/') || allowedExtensions.test(file.name);
+            
             if (!isText && !isImage) {
-                reject(new Error(`File "${file.name}" ignored. Only text/code or image files are supported.`));
+                reject(new Error(`File "${file.name}" ignored. Unsupported file type.`));
                 return;
             }
 
@@ -609,7 +622,7 @@ const App: React.FC = () => {
             if (isImage) {
                 reader.readAsDataURL(file);
             } else {
-                reader.readAsText(file); // Better for text handling
+                reader.readAsText(file); 
             }
         });
     };
@@ -774,7 +787,10 @@ const App: React.FC = () => {
                    {msg.role === Role.Model && !isStreaming && !msg.isError && (
                       <div className="flex items-center gap-3 mt-2 px-1 justify-start">
                             <button onClick={() => handleResend(index)} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><RefreshIcon /> Redo</button>
-                            <button onClick={() => copyToClipboard(msg.text)} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><CopyIcon /> Copy</button>
+                            <button onClick={() => copyToClipboard(msg.text, msg.id)} className={`text-xs font-medium flex items-center gap-1.5 transition-colors px-1 ${copiedMessageId === msg.id ? 'text-green-600 dark:text-green-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}>
+                                {copiedMessageId === msg.id ? <CheckIcon /> : <CopyIcon />} 
+                                {copiedMessageId === msg.id ? 'Copied!' : 'Copy'}
+                            </button>
                             <button onClick={handleShare} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><ShareIcon /> Share</button>
                        </div>
                    )}
@@ -805,7 +821,7 @@ const App: React.FC = () => {
               )}
               <div className="relative flex items-end gap-2 bg-gray-50 dark:bg-dark-900 border border-gray-300 dark:border-dark-700 rounded-3xl shadow-sm focus-within:shadow-md focus-within:border-gray-400 dark:focus-within:border-gray-500 transition-all p-2">
                  <button onClick={() => fileInputRef.current?.click()} disabled={isStreaming} className="p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors rounded-full hover:bg-gray-200 dark:hover:bg-dark-800 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">{isMultimodal ? <ImageIcon /> : <PaperClipIcon />}</button>
-                 <input type="file" multiple ref={fileInputRef} className="hidden" accept={isMultimodal ? "*/*" : ".txt,.md,.json,.js,.ts,.tsx,.py,.java,.c,.cpp,.h,.rs,.go,.html,.css,.xml,.yaml,.toml,.sh,.bat,.sql"} onChange={handleFileUpload} />
+                 <input type="file" multiple ref={fileInputRef} className="hidden" accept=".txt,.md,.markdown,.json,.csv,.log,.xml,.yaml,.yml,.toml,.ini,.cfg,.conf,.env,.js,.jsx,.ts,.tsx,.html,.css,.scss,.less,.py,.java,.c,.cpp,.h,.hpp,.cc,.cs,.go,.rs,.rb,.php,.swift,.kt,.sql,.sh,.bash,.bat,.ps1,.dockerfile,.cu,.cuh,image/*" onChange={handleFileUpload} />
                  <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)} disabled={isStreaming} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }} placeholder={isStreaming ? "Wait for response..." : "Message ChatClient..."} className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none py-3 px-4 max-h-[200px] min-h-[24px] leading-6 custom-scrollbar disabled:cursor-not-allowed" rows={1} />
                  {isStreaming && currentSessionId === streamingSessionId ? <button onClick={handleStopGeneration} className="p-2 mb-1 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors animate-pulse flex-shrink-0"><StopIcon /></button> : <button onClick={() => handleSendMessage()} disabled={!input.trim() && attachments.length === 0} className={`p-2 mb-1 rounded-full transition-colors shadow-md flex-shrink-0 ${isStreaming ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-gray-900 dark:bg-white text-white dark:text-black hover:bg-gray-700 dark:hover:bg-gray-200'}`}><SendIcon /></button>}
               </div>
