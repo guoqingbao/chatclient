@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -197,6 +197,23 @@ const App: React.FC = () => {
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // --- MEMOIZED MARKDOWN COMPONENTS ---
+  // Memoizing this object prevents CodeBlock from re-mounting on every stream chunk update
+  // which fixes the "cannot copy code during generation" issue.
+  const markdownComponents = useMemo(() => ({
+    code(props: any) {
+      const {children, className, node, ...rest} = props
+      const match = /language-(\w+)/.exec(className || '')
+      return match ? (
+        <CodeBlock language={match[1]} value={String(children).replace(/\n$/, '')} />
+      ) : (
+        <code {...rest} className={className}>
+          {children}
+        </code>
+      )
+    }
+  }), []);
 
   // --- INITIALIZATION & HYDRATION ---
 
@@ -850,12 +867,11 @@ const App: React.FC = () => {
       {/* Sidebar */}
       <div className="w-64 bg-gray-50 dark:bg-dark-900 border-r border-gray-200 dark:border-dark-800 flex flex-col hidden md:flex transition-all duration-300">
         <div className="p-4 flex items-center gap-3 mb-2">
-           <div className="w-10 h-10 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl flex items-center justify-center shadow-lg ring-1 ring-white/10">
-               <span className="text-white font-bold text-xl">C</span>
+           <div className="w-10 h-10 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center shadow-md text-white font-bold text-xl">
+               <span>C</span>
            </div>
            <div>
                <h1 className="font-bold text-xl tracking-tight text-gray-900 dark:text-white leading-none">ChatClient</h1>
-               <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 uppercase tracking-widest">Rust Edition</span>
            </div>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
@@ -898,7 +914,7 @@ const App: React.FC = () => {
         
         <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
            <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-lg flex items-center justify-center text-white font-bold">C</div>
+                <div className="w-8 h-8 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-lg flex items-center justify-center text-white font-bold">C</div>
                 <span className="font-bold text-gray-900 dark:text-white">ChatClient</span>
            </div>
            <div className="flex gap-4">
@@ -911,7 +927,7 @@ const App: React.FC = () => {
         <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
           {!currentSession || currentSession.messages.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
-                <div className="w-24 h-24 mb-6 rounded-3xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg"><div className="text-white"><BotIcon className="w-12 h-12" /></div></div>
+                <div className="w-24 h-24 mb-6 rounded-3xl bg-gradient-to-br from-indigo-100 to-purple-100 dark:from-indigo-900/40 dark:to-purple-900/40 flex items-center justify-center shadow-sm"><div className="text-indigo-500 dark:text-indigo-300"><BotIcon className="w-12 h-12" /></div></div>
                 <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-200 mb-2">{t.welcomeTitle}</h3>
                 <p className="text-center max-w-md text-gray-500 dark:text-gray-500">{t.welcomeSubtitle}{isMultimodal && <span className="block mt-2 text-indigo-500 text-sm">{t.imageUploadEnabled}</span>}</p>
              </div>
@@ -930,12 +946,12 @@ const App: React.FC = () => {
                 ref={isAssistantActiveTurn ? botTurnRef : null}
                 className={`scroll-mt-4 flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}
               >
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm ${
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm transition-all duration-300 ${
                     msg.role === Role.User 
-                    ? 'bg-gradient-to-br from-blue-600 to-cyan-500 text-white' 
-                    : `bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 text-white ${isWaitingForFirstToken || (isStreaming && index === currentSession.messages.length - 1) ? 'animate-pulse ring-2 ring-pink-300 dark:ring-pink-900' : ''}`
+                    ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300' 
+                    : `bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-300 ${isWaitingForFirstToken || (isStreaming && index === currentSession.messages.length - 1) ? 'ring-2 ring-orange-200 dark:ring-orange-800 animate-pulse' : ''}`
                 }`}>
-                  {msg.role === Role.User ? <UserIcon className="w-6 h-6 text-white" /> : <BotIcon className="w-6 h-6 text-white" />}
+                  {msg.role === Role.User ? <UserIcon className="w-6 h-6" /> : <BotIcon className="w-6 h-6" />}
                 </div>
                 <div className={`flex flex-col max-w-[85%] lg:max-w-[75%] ${msg.role === Role.User ? 'items-end' : 'items-start'}`}>
                    <div className="flex items-center gap-2 mb-1 px-1"><span className="text-xs font-semibold text-gray-500 dark:text-gray-400">{msg.role === Role.User ? 'You' : 'ChatClient'}</span></div>
@@ -964,19 +980,7 @@ const App: React.FC = () => {
                            {contentParts?.hasThought && <ThinkingProcess thought={isThinkingTruncated ? "" : contentParts.thought} isComplete={contentParts.isComplete} isTruncated={!!isThinkingTruncated} lang={lang} />}
                            <ReactMarkdown 
                               remarkPlugins={[remarkGfm]}
-                              components={{
-                                code(props) {
-                                  const {children, className, node, ...rest} = props
-                                  const match = /language-(\w+)/.exec(className || '')
-                                  return match ? (
-                                    <CodeBlock language={match[1]} value={String(children).replace(/\n$/, '')} />
-                                  ) : (
-                                    <code {...rest} className={className}>
-                                      {children}
-                                    </code>
-                                  )
-                                }
-                              }}
+                              components={markdownComponents}
                            >
                               {isThinkingTruncated ? (contentParts.thought + "\n\n" + contentParts.mainContent) : (contentParts ? contentParts.mainContent : msg.text)}
                            </ReactMarkdown>
@@ -999,8 +1003,8 @@ const App: React.FC = () => {
             )})
           )}
           <div ref={messagesEndRef} className="h-4" />
-          {/* Spacer to allow scrolling the last message to the top */}
-          <div className="h-[80vh] w-full" aria-hidden="true" />
+          {/* Reduced Spacer to prevent excessive blank area */}
+          <div className="h-32 md:h-48 shrink-0" aria-hidden="true" />
         </div>
 
         {/* Input Area */}
