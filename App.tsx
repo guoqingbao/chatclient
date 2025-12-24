@@ -564,31 +564,93 @@ const App: React.FC = () => {
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const filesArray = Array.from(e.target.files) as File[];
-      const newAttachments: FileAttachment[] = [];
-      for (const file of filesArray) {
-        const isImage = file.type.startsWith('image/');
-        if (isImage && !isMultimodal) { alert(`Image upload ignored. Current model "${settings.model}" does not support images.`); continue; }
-        const isText = file.type.startsWith('text/') || file.name.match(/\.(js|jsx|ts|tsx|rs|py|c|cpp|h|java|go|rb|php|html|css|json|md|yaml|toml|sh|bat|sql|xml|txt)$/i);
-        if (!isText && !isImage) { alert(`File "${file.name}" ignored. Only text/code or image files are supported.`); continue; }
-        try {
-          if (isImage) {
-              const reader = new FileReader();
-              reader.onload = (ev) => {
-                  newAttachments.push({ name: file.name, type: file.type, content: ev.target?.result as string, tokenCount: 256 });
-                  setAttachments(prev => [...prev, ...newAttachments].filter((v,i,a)=>a.findIndex(t=>(t.name===v.name))===i));
-              };
-              reader.readAsDataURL(file);
-          } else {
-              const text = await file.text();
-              newAttachments.push({ name: file.name, type: file.type, content: text, tokenCount: estimateTokenCount(text) });
-              setAttachments(prev => [...prev, ...newAttachments]);
-          }
-        } catch (err) { console.error("Failed to read file", file.name); }
-      }
+    if (!e.target.files || e.target.files.length === 0) return;
+    
+    const files = Array.from(e.target.files);
+    const MAX_TOTAL_SIZE_MB = 100;
+    const MAX_TOTAL_BYTES = MAX_TOTAL_SIZE_MB * 1024 * 1024;
+    
+    // Approximate current size in bytes (Base64 is ~1.33x larger than binary, so length * 0.75 is approx binary size)
+    const currentSize = attachments.reduce((acc, curr) => acc + (curr.content.length * 0.75), 0);
+    const newFilesSize = files.reduce((acc, f) => acc + f.size, 0);
+    
+    if (currentSize + newFilesSize > MAX_TOTAL_BYTES) {
+        alert(`Upload blocked: Total attachment size would exceed ${MAX_TOTAL_SIZE_MB}MB limit.`);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
     }
-    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    const readFile = (file: File): Promise<FileAttachment> => {
+        return new Promise((resolve, reject) => {
+            const isImage = file.type.startsWith('image/');
+            if (isImage && !isMultimodal) {
+                reject(new Error(`Image upload ignored. Current model "${settings.model}" does not support images.`));
+                return;
+            }
+            
+            const isText = file.type.startsWith('text/') || file.name.match(/\.(js|jsx|ts|tsx|rs|py|c|cpp|h|java|go|rb|php|html|css|json|md|yaml|toml|sh|bat|sql|xml|txt)$/i);
+            if (!isText && !isImage) {
+                reject(new Error(`File "${file.name}" ignored. Only text/code or image files are supported.`));
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const content = ev.target?.result as string;
+                resolve({
+                    name: file.name,
+                    type: file.type,
+                    content: content,
+                    tokenCount: isImage ? 256 : estimateTokenCount(content)
+                });
+            };
+            reader.onerror = () => reject(new Error(`Failed to read file ${file.name}`));
+            
+            if (isImage) {
+                reader.readAsDataURL(file);
+            } else {
+                reader.readAsText(file); // Better for text handling
+            }
+        });
+    };
+
+    try {
+        // Use Promise.allSettled to ensure one failure doesn't crash everything
+        const results = await Promise.allSettled(files.map(readFile));
+        const successfulAttachments: FileAttachment[] = [];
+        let errors: string[] = [];
+
+        results.forEach(result => {
+            if (result.status === 'fulfilled') {
+                successfulAttachments.push(result.value);
+            } else {
+                if (result.reason instanceof Error) {
+                     // Filter out expected ignore messages to avoid spamming alerts
+                     if (!result.reason.message.includes("ignored")) {
+                         errors.push(result.reason.message);
+                     } else {
+                         console.warn(result.reason.message);
+                     }
+                }
+            }
+        });
+        
+        if (errors.length > 0) {
+            alert(`Some files could not be uploaded:\n${errors.slice(0, 3).join('\n')}`);
+        }
+
+        if (successfulAttachments.length > 0) {
+            setAttachments(prev => {
+                const combined = [...prev, ...successfulAttachments];
+                // Filter duplicates by name to prevent key collisions
+                return combined.filter((v, i, a) => a.findIndex(t => t.name === v.name) === i);
+            });
+        }
+    } catch (error) {
+        console.error("Critical error processing files:", error);
+    } finally {
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const deleteSession = (e: React.MouseEvent, id: string) => {
