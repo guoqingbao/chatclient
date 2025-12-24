@@ -416,32 +416,35 @@ export const streamChatResponse = async (
     });
 
     if (!response.ok) {
-      // Try to parse error message more robustly
+      // FIX: Read body once as text to avoid "body stream already read" if we tried json() then text()
       let errorDetail = "";
+      let responseText = "";
       
       try {
-        const errorData = await response.json();
+        responseText = await response.text();
+      } catch (e) {
+        responseText = ""; // Failed to read body at all
+      }
+
+      try {
+        // Try to parse as JSON
+        const errorData = JSON.parse(responseText);
         // Handle various error formats
-        // 1. OpenAI format: { error: { message: "..." } }
         if (errorData.error && errorData.error.message) {
            errorDetail = errorData.error.message;
         } 
-        // 2. Generic message: { message: "..." }
         else if (errorData.message) {
            errorDetail = errorData.message;
         }
-        // 3. Python/FastAPI detail: { detail: "..." }
         else if (errorData.detail) {
            errorDetail = typeof errorData.detail === 'string' ? errorData.detail : JSON.stringify(errorData.detail);
         }
-        // 4. Fallback: stringify whole object
         else {
            errorDetail = JSON.stringify(errorData);
         }
       } catch (e) {
-         // Raw text?
-         const text = await response.text();
-         if (text) errorDetail = text.slice(0, 300); // Capture more context
+         // Fallback: it wasn't JSON, use the raw text (e.g. HTML error from Nginx 413)
+         errorDetail = responseText.slice(0, 300); 
       }
       
       let errorMsg = `Server Error (${response.status})`;
@@ -451,6 +454,8 @@ export const streamChatResponse = async (
           errorMsg += ": Endpoint not found. Check Server URL.";
       } else if (response.status === 401) {
           errorMsg += ": Unauthorized. Check API Key.";
+      } else if (response.status === 413) {
+          errorMsg += ": Request too large. Try a smaller image.";
       }
 
       throw new Error(errorMsg);
@@ -461,7 +466,6 @@ export const streamChatResponse = async (
     reader = response.body.getReader();
     
     // CRITICAL: Explicitly listen for abort to cancel the reader immediately.
-    // This handles cases where the stream is hung waiting for data.
     const abortHandler = () => {
         reader?.cancel().catch(() => {});
     };
@@ -512,7 +516,6 @@ export const streamChatResponse = async (
                     }
                   } catch (e) {
                     // JSON parse error usually means packet split (should be handled by buffer now)
-                    // But if it happens, we ignore just this line to prevent crashing
                     console.debug("Skipping malformed JSON line", e);
                   }
               }
