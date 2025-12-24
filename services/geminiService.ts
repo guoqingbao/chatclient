@@ -397,6 +397,18 @@ export const streamChatResponse = async (
       if (settings.topK > 0) {
         body.top_k = settings.topK;
       }
+      
+      // Advanced Sampling Parameters
+      // Injected directly into root level as per OpenAI/vLLM standards
+      body.min_p = settings.minP;
+      body.frequency_penalty = settings.frequencyPenalty;
+      body.presence_penalty = settings.presencePenalty;
+      body.repeat_last_n = settings.repeatLastN;
+      
+      // 'thinking' is mostly boolean feature flag for some models
+      if (settings.thinking) {
+          body.thinking = true;
+      }
   }
 
   // Inject session_id if context caching is enabled

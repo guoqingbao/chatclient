@@ -57,6 +57,12 @@ export interface AppSettings {
   apiKey: string;
   contextCache: boolean;
   generateTitles: boolean;
+  // Advanced Sampling
+  minP: number;
+  frequencyPenalty: number;
+  presencePenalty: number;
+  repeatLastN: number;
+  thinking: boolean;
 }
 
 // Interface for configuration injected by the Host
@@ -87,4 +93,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
   contextCache: true,
   generateTitles: false,
+  // Advanced defaults
+  minP: 0.05,
+  frequencyPenalty: 0.0,
+  presencePenalty: 0.0,
+  repeatLastN: 64,
+  thinking: false,
 };

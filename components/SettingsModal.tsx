@@ -77,15 +77,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
-      <div className="bg-white dark:bg-dark-900 rounded-2xl p-6 w-full max-w-lg border border-gray-200 dark:border-dark-800 shadow-2xl transform transition-all">
-        <div className="flex justify-between items-center mb-6 border-b border-gray-100 dark:border-dark-800 pb-4">
+      <div className="bg-white dark:bg-dark-900 rounded-2xl p-6 w-full max-w-lg border border-gray-200 dark:border-dark-800 shadow-2xl transform transition-all flex flex-col max-h-[90vh]">
+        <div className="flex justify-between items-center mb-4 border-b border-gray-100 dark:border-dark-800 pb-4 flex-shrink-0">
           <h2 className="text-xl font-bold text-gray-900 dark:text-white">Configuration</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
             ✕
           </button>
         </div>
 
-        <div className="space-y-5 max-h-[65vh] overflow-y-auto pr-2 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-5">
           
           {/* Server Configuration */}
           <div className="space-y-4">
@@ -181,7 +181,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center justify-between border border-indigo-50 dark:border-indigo-900/20 bg-indigo-50/30 dark:bg-indigo-900/5 p-3 rounded-lg">
               <div>
                 <div className="text-sm font-medium text-gray-900 dark:text-white">Advanced Sampling</div>
-                <div className="text-xs text-gray-500">Enable Temperature, Top-P, and Top-K</div>
+                <div className="text-xs text-gray-500">Customize generation (Temp, Top-P, Min-P...)</div>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input 
@@ -194,56 +194,123 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               </label>
             </div>
 
-            {/* Temperature */}
-            <div className={`transition-opacity duration-200 ${useSampling ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-              <div className="flex justify-between">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
-                <span className="text-xs text-gray-500 font-mono">{settings.temperature}</span>
-              </div>
-              <input 
-                type="range" 
-                min="0" 
-                max="2" 
-                step="0.1"
-                disabled={!useSampling}
-                className="w-full accent-indigo-600 dark:accent-indigo-400 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                value={settings.temperature}
-                onChange={(e) => handleChange('temperature', parseFloat(e.target.value))}
-              />
-            </div>
+            <div className={`space-y-4 transition-all duration-300 ${useSampling ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                
+                {/* Temperature */}
+                <div>
+                  <div className="flex justify-between">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
+                    <span className="text-xs text-gray-500 font-mono">{settings.temperature}</span>
+                  </div>
+                  <input 
+                    type="range" min="0" max="2" step="0.1" disabled={!useSampling}
+                    className="w-full accent-indigo-600 dark:accent-indigo-400 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                    value={settings.temperature}
+                    onChange={(e) => handleChange('temperature', parseFloat(e.target.value))}
+                  />
+                </div>
 
-            {/* Top P */}
-             <div className={`transition-opacity duration-200 ${useSampling ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-              <div className="flex justify-between">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Top P</label>
-                <span className="text-xs text-gray-500 font-mono">{settings.topP}</span>
-              </div>
-              <input 
-                type="range" 
-                min="0" 
-                max="1" 
-                step="0.05"
-                disabled={!useSampling}
-                className="w-full accent-indigo-600 dark:accent-indigo-400 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                value={settings.topP}
-                onChange={(e) => handleChange('topP', parseFloat(e.target.value))}
-              />
-            </div>
+                {/* Top P & Min P Row */}
+                <div className="grid grid-cols-2 gap-4">
+                     <div>
+                      <div className="flex justify-between">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Top P</label>
+                        <span className="text-xs text-gray-500 font-mono">{settings.topP}</span>
+                      </div>
+                      <input 
+                        type="range" min="0" max="1" step="0.05" disabled={!useSampling}
+                        className="w-full accent-indigo-600 dark:accent-indigo-400 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        value={settings.topP}
+                        onChange={(e) => handleChange('topP', parseFloat(e.target.value))}
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Min P</label>
+                        <span className="text-xs text-gray-500 font-mono">{settings.minP}</span>
+                      </div>
+                      <input 
+                        type="range" min="0" max="1" step="0.01" disabled={!useSampling}
+                        className="w-full accent-indigo-600 dark:accent-indigo-400 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        value={settings.minP}
+                        onChange={(e) => handleChange('minP', parseFloat(e.target.value))}
+                      />
+                    </div>
+                </div>
 
-            {/* Top K (Conditional) */}
-            <div className={`transition-opacity duration-200 ${useSampling ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-              <div className="flex justify-between">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Top K</label>
-                <span className="text-xs text-gray-500 font-mono">{settings.topK}</span>
-              </div>
-              <input 
-                type="number" 
-                min="0"
-                disabled={!useSampling}
-                className="w-full bg-gray-50 dark:bg-dark-950 border border-gray-200 dark:border-dark-800 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                value={settings.topK}
-                onChange={(e) => handleChange('topK', parseInt(e.target.value) || 0)}
-              />
+                {/* Top K */}
+                <div>
+                  <div className="flex justify-between">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Top K</label>
+                    <span className="text-xs text-gray-500 font-mono">{settings.topK}</span>
+                  </div>
+                  <input 
+                    type="number" min="0" disabled={!useSampling}
+                    className="w-full bg-gray-50 dark:bg-dark-950 border border-gray-200 dark:border-dark-800 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    value={settings.topK}
+                    onChange={(e) => handleChange('topK', parseInt(e.target.value) || 0)}
+                  />
+                </div>
+
+                {/* Penalties Row */}
+                <div className="grid grid-cols-2 gap-4">
+                     <div>
+                      <div className="flex justify-between">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Freq. Penalty</label>
+                        <span className="text-xs text-gray-500 font-mono">{settings.frequencyPenalty}</span>
+                      </div>
+                      <input 
+                        type="range" min="-2" max="2" step="0.1" disabled={!useSampling}
+                        className="w-full accent-indigo-600 dark:accent-indigo-400 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        value={settings.frequencyPenalty}
+                        onChange={(e) => handleChange('frequencyPenalty', parseFloat(e.target.value))}
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Pres. Penalty</label>
+                        <span className="text-xs text-gray-500 font-mono">{settings.presencePenalty}</span>
+                      </div>
+                      <input 
+                        type="range" min="-2" max="2" step="0.1" disabled={!useSampling}
+                        className="w-full accent-indigo-600 dark:accent-indigo-400 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        value={settings.presencePenalty}
+                        onChange={(e) => handleChange('presencePenalty', parseFloat(e.target.value))}
+                      />
+                    </div>
+                </div>
+                
+                 {/* Repeat Last N */}
+                <div>
+                  <div className="flex justify-between">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Repeat Last N</label>
+                    <span className="text-xs text-gray-500 font-mono">{settings.repeatLastN}</span>
+                  </div>
+                   <input 
+                    type="range" min="16" max="256" step="16" disabled={!useSampling}
+                    className="w-full accent-indigo-600 dark:accent-indigo-400 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                    value={settings.repeatLastN}
+                    onChange={(e) => handleChange('repeatLastN', parseInt(e.target.value))}
+                  />
+                </div>
+
+                 {/* Thinking Toggle */}
+                 <div className="flex items-center justify-between border border-gray-100 dark:border-dark-800 p-2 rounded-lg">
+                  <div>
+                    <div className="text-sm font-medium text-gray-900 dark:text-white">Enable Thinking</div>
+                    <div className="text-xs text-gray-500">Use with reasoning models</div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer" 
+                      checked={settings.thinking}
+                      disabled={!useSampling}
+                      onChange={(e) => handleChange('thinking', e.target.checked)}
+                    />
+                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
             </div>
 
             {/* Max Tokens */}
@@ -277,7 +344,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
 
-        <div className="mt-6 flex justify-end pt-4 border-t border-gray-100 dark:border-dark-800">
+        <div className="mt-6 flex justify-end pt-4 border-t border-gray-100 dark:border-dark-800 flex-shrink-0">
           <button 
             onClick={onClose}
             className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg transition-colors font-medium shadow-sm"
