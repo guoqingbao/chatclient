@@ -13,6 +13,7 @@ import { translations, Language } from './utils/translations';
 const ThinkingProcess = ({ thought, isComplete, isTruncated, lang }: { thought: string, isComplete: boolean, isTruncated: boolean, lang: Language }) => {
   const [isOpen, setIsOpen] = useState(!isComplete || isTruncated);
   const t = translations[lang];
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isComplete && !isTruncated) {
@@ -21,6 +22,14 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated, lang }: { thought: 
       setIsOpen(true);
     }
   }, [isComplete, isTruncated]);
+
+  // Auto-scroll to bottom of thought container while generating
+  useEffect(() => {
+    if (isOpen && !isComplete && scrollRef.current) {
+       const el = scrollRef.current;
+       el.scrollTop = el.scrollHeight;
+    }
+  }, [thought, isOpen, isComplete]);
 
   if (isTruncated && !thought) {
       return (
@@ -57,7 +66,10 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated, lang }: { thought: 
       </button>
       
       {isOpen && (
-        <div className="mt-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-dark-900 p-3 rounded-md whitespace-pre-wrap leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
+        <div 
+          ref={scrollRef}
+          className="mt-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-dark-900 p-3 rounded-md whitespace-pre-wrap leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200 max-h-80 overflow-y-auto custom-scrollbar"
+        >
           {thought}
           {isTruncated && (
              <div className="mt-3 pt-2 border-t border-amber-200 dark:border-amber-900/30 text-amber-600 dark:text-amber-500 text-xs italic flex items-center gap-1">

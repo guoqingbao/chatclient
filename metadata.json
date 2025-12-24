@@ -1,5 +1,5 @@
 {
-  "name": "RustLike Chat UI",
+  "name": "RustChatUI",
   "description": "A modern, beautiful chat interface supporting file uploads, history management, and advanced model configurations for OpenAI-compatible servers.",
   "requestFramePermissions": []
 }
