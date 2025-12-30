@@ -3,13 +3,57 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage, SessionStatus } from './types';
+import { Message, ChatSession, Role, AppSettings, DEFAULT_SETTINGS, FileAttachment, TokenUsage, SessionStatus, ToolCall } from './types';
 import { streamChatResponse, generateTitle, fetchTokenUsage, estimateTokenCount, fetchServerConfig, fetchModelCapabilities, fetchAvailableModels } from './services/geminiService';
 import { BotIcon, UserIcon, SendIcon, StopIcon, PaperClipIcon, SettingsIcon, RefreshIcon, CopyIcon, ShareIcon, SunIcon, MoonIcon, EditIcon, WritingIcon, CachedIcon, SwappedIcon, WaitingIcon, FinishedIcon, ImageIcon, CheckIcon } from './components/Icon';
 import SettingsModal from './components/SettingsModal';
 import CodeBlock from './components/CodeBlock';
 import { saveAttachmentToDB, getAttachmentFromDB, pruneOrphanedAttachments, deleteAttachmentFromDB } from './services/db';
 import { translations, Language } from './utils/translations';
+
+const ToolCallDisplay = ({ toolCall }: { toolCall: ToolCall }) => {
+    let args: Record<string, any> = {};
+    let isParseError = false;
+    
+    try {
+        if (toolCall.function.arguments) {
+            args = JSON.parse(toolCall.function.arguments);
+        }
+    } catch (e) {
+        isParseError = true;
+    }
+
+    return (
+        <div className="mb-4 rounded-lg border border-gray-200 dark:border-dark-700 bg-gray-50 dark:bg-dark-900 overflow-hidden font-mono text-xs md:text-sm">
+            <div className="bg-gray-100 dark:bg-dark-800 px-3 py-2 border-b border-gray-200 dark:border-dark-700 flex items-center justify-between">
+                <span className="font-bold text-gray-700 dark:text-gray-300">Tool Call: <span className="text-indigo-600 dark:text-indigo-400">{toolCall.function.name}</span></span>
+                <span className="text-[10px] text-gray-500 bg-white dark:bg-dark-950 px-1.5 py-0.5 rounded border border-gray-200 dark:border-dark-700">function</span>
+            </div>
+            <div className="p-0">
+                {isParseError ? (
+                    <div className="p-3 text-gray-500 whitespace-pre-wrap break-all">
+                        {toolCall.function.arguments || <span className="italic opacity-50">No arguments</span>}
+                    </div>
+                ) : (
+                    Object.keys(args).length > 0 ? (
+                        <table className="w-full text-left border-collapse">
+                            <tbody>
+                                {Object.entries(args).map(([key, value], i) => (
+                                    <tr key={i} className="border-b border-gray-100 dark:border-dark-800 last:border-0">
+                                        <td className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-400 bg-gray-50/50 dark:bg-dark-900/50 w-1/4 align-top">{key}</td>
+                                        <td className="px-3 py-2 text-gray-800 dark:text-gray-200 break-all">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : (
+                        <div className="p-3 text-gray-400 italic">No arguments provided</div>
+                    )
+                )}
+            </div>
+        </div>
+    );
+};
 
 const ThinkingProcess = ({ thought, isComplete, isTruncated, lang }: { thought: string, isComplete: boolean, isTruncated: boolean, lang: Language }) => {
   const [isOpen, setIsOpen] = useState(!isComplete || isTruncated);
@@ -654,13 +698,17 @@ const App: React.FC = () => {
     scrollToNewTurnRef.current = true;
 
     let bufferedText = "";
+    let bufferedToolCalls: ToolCall[] = [];
     let animationFrameId: number;
     const flushBuffer = () => {
        setSessions(prev => prev.map(s => {
           if (s.id === sessionId) {
             const msgs = [...s.messages];
             const lastMsg = msgs[msgs.length - 1];
-            if (lastMsg?.role === Role.Model && lastMsg.text !== bufferedText) lastMsg.text = bufferedText;
+            if (lastMsg?.role === Role.Model) {
+                 if (lastMsg.text !== bufferedText) lastMsg.text = bufferedText;
+                 if (bufferedToolCalls.length > 0) lastMsg.toolCalls = bufferedToolCalls;
+            }
             return { ...s, messages: msgs };
           }
           return s;
@@ -670,15 +718,21 @@ const App: React.FC = () => {
     animationFrameId = requestAnimationFrame(flushBuffer);
 
     try {
-      await streamChatResponse(sessionId, historyMessages.filter(m => m.role !== Role.Model || m.text.length > 0), userText, userAttachments, settings, abortControllerRef.current.signal, (chunkText) => {
+      await streamChatResponse(sessionId, historyMessages.filter(m => m.role !== Role.Model || m.text.length > 0), userText, userAttachments, settings, abortControllerRef.current.signal, (chunkText, chunkToolCalls) => {
           if (abortControllerRef.current?.signal.aborted) return;
           bufferedText = chunkText;
+          if (chunkToolCalls && chunkToolCalls.length > 0) {
+              bufferedToolCalls = chunkToolCalls;
+          }
       }, isMultimodal, useSampling);
       setSessions(prev => prev.map(s => {
           if (s.id === sessionId) {
             const msgs = [...s.messages];
             const lastMsg = msgs[msgs.length - 1];
-            if (lastMsg?.role === Role.Model) lastMsg.text = bufferedText;
+            if (lastMsg?.role === Role.Model) {
+                lastMsg.text = bufferedText;
+                if (bufferedToolCalls.length > 0) lastMsg.toolCalls = bufferedToolCalls;
+            }
             return { ...s, messages: msgs };
           }
           return s;
@@ -1040,6 +1094,11 @@ const App: React.FC = () => {
                         <div className="markdown-body">
                            {isWaitingForFirstToken && <div className="flex items-center gap-1 h-6"><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div></div>}
                            
+                           {/* Render Tool Calls if present */}
+                           {msg.toolCalls && msg.toolCalls.map((tc, idx) => (
+                               <ToolCallDisplay key={tc.id || idx} toolCall={tc} />
+                           ))}
+
                            {segments.map((segment, idx) => {
                              if (segment.type === 'thought') {
                                return (

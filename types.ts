@@ -13,11 +13,21 @@ export interface FileAttachment {
   tokenCount?: number;
 }
 
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
 export interface Message {
   id: string;
   role: Role;
   text: string;
   attachments?: FileAttachment[];
+  toolCalls?: ToolCall[];
   timestamp: number;
   isError?: boolean;
 }

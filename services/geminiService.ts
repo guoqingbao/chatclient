@@ -1,5 +1,5 @@
 
-import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig } from "../types";
+import { Message, Role, AppSettings, FileAttachment, TokenUsage, ServerConfig, ToolCall } from "../types";
 
 // Helper to determine if a message contains multimodal content
 const isMultimodalMessage = (text: string, attachments: FileAttachment[]): boolean => {
@@ -370,7 +370,7 @@ export const streamChatResponse = async (
   attachments: FileAttachment[],
   settings: AppSettings,
   signal: AbortSignal,
-  onChunk: (text: string) => void,
+  onChunk: (text: string, toolCalls: ToolCall[]) => void,
   isMultimodalSupported: boolean,
   useSampling: boolean = false
 ): Promise<string> => {
@@ -490,6 +490,9 @@ export const streamChatResponse = async (
     const decoder = new TextDecoder("utf-8");
     let done = false;
     let accumulatedText = "";
+    // Object to track tool calls by index. 
+    // OpenAI stream can send multiple tool calls in parallel chunks.
+    const accumulatedToolCalls: Record<number, ToolCall> = {};
     let buffer = ""; // Buffer for split chunks
 
     while (!done) {
@@ -510,7 +513,6 @@ export const streamChatResponse = async (
             const lines = buffer.split('\n');
             
             // Keep the last segment in the buffer (it might be incomplete)
-            // If the chunk ended with \n, the last element will be empty string, which is fine
             buffer = lines.pop() || "";
             
             for (const line of lines) {
@@ -525,10 +527,36 @@ export const streamChatResponse = async (
                     
                     if (json.choices && json.choices.length > 0) {
                         const delta = json.choices[0].delta;
+                        
+                        // Handle Text Content
                         if (delta.content) {
                           accumulatedText += delta.content;
-                          onChunk(accumulatedText);
                         }
+
+                        // Handle Tool Calls
+                        if (delta.tool_calls) {
+                           delta.tool_calls.forEach((tc: any) => {
+                               const index = tc.index || 0;
+                               
+                               if (!accumulatedToolCalls[index]) {
+                                   accumulatedToolCalls[index] = {
+                                       id: tc.id || "",
+                                       type: tc.type || "function",
+                                       function: { name: "", arguments: "" }
+                                   };
+                               }
+
+                               if (tc.id) accumulatedToolCalls[index].id = tc.id;
+                               if (tc.type) accumulatedToolCalls[index].type = tc.type;
+                               if (tc.function) {
+                                   if (tc.function.name) accumulatedToolCalls[index].function.name += tc.function.name;
+                                   if (tc.function.arguments) accumulatedToolCalls[index].function.arguments += tc.function.arguments;
+                               }
+                           });
+                        }
+                        
+                        // Emit both text and current state of tool calls
+                        onChunk(accumulatedText, Object.values(accumulatedToolCalls));
                     }
                   } catch (e) {
                     // JSON parse error usually means packet split (should be handled by buffer now)
