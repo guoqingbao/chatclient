@@ -9,18 +9,21 @@ const isMultimodalMessage = (text: string, attachments: FileAttachment[]): boole
   return hasImageAttachments || hasImageUrls;
 };
 
-// Helper to remove thinking content from text
-const removeThinkingContent = (text: string): string => {
+// Helper to remove thinking content from text (supports multiple formats)
+export const removeThinkingContent = (text: string): string => {
   if (!text) return "";
   let cleaned = text;
-  // Remove XML style <think>...</think>
-  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
-  // Remove Bracket style [THINK]...[/THINK]
-  cleaned = cleaned.replace(/\[THINK\][\s\S]*?\[\/THINK\]/gi, '');
   
-  // Remove unclosed tags at the very end of the string (truncated thoughts)
-  cleaned = cleaned.replace(/<think>[\s\S]*$/i, '');
-  cleaned = cleaned.replace(/\[THINK\][\s\S]*$/i, '');
+  const patterns = [
+      /<think>[\s\S]*?(?:<\/think>|$)/gi,
+      /<\|think\|>[\s\S]*?(?:<\|\/think\|>|$)/gi,
+      /<thought>[\s\S]*?(?:<\/thought>|$)/gi,
+      /\[THINK\][\s\S]*?(?:\[\/THINK\]|$)/gi
+  ];
+  
+  for (const pattern of patterns) {
+      cleaned = cleaned.replace(pattern, '');
+  }
   
   return cleaned.trim();
 };
@@ -30,7 +33,7 @@ const prepareMessages = (
   history: Message[], 
   newMessage: string, 
   attachments: FileAttachment[], 
-  settings: AppSettings,
+  settings: AppSettings, 
   isMultimodalSupported: boolean
 ) => {
   const messages: any[] = [];

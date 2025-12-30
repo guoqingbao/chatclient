@@ -215,6 +215,78 @@ const App: React.FC = () => {
     }
   }), []);
 
+  // --- PARSER FOR INTERLEAVED THOUGHTS ---
+  const parseMixedContent = (text: string) => {
+    const segments: { type: 'text' | 'thought', content: string, isComplete?: boolean }[] = [];
+    if (!text) return segments;
+
+    let currentIndex = 0;
+    
+    // Tag pairs. Order doesn't strictly matter for "earliest" match logic.
+    const tagPairs = [
+        { start: '<think>', end: '</think>' },
+        { start: '<|think|>', end: '<|/think|>' },
+        { start: '<thought>', end: '</thought>' },
+        { start: '\\[THINK\\]', end: '\\[/THINK\\]' } // Regex escaped for literal [THINK]
+    ];
+
+    while (currentIndex < text.length) {
+        let nearestTagIndex = Infinity;
+        let matchedPair = null;
+        let matchedStartStr = '';
+
+        // Find earliest matching start tag
+        for (const pair of tagPairs) {
+            const regex = new RegExp(pair.start, 'gi');
+            regex.lastIndex = currentIndex;
+            const match = regex.exec(text);
+            
+            if (match && match.index < nearestTagIndex) {
+                nearestTagIndex = match.index;
+                matchedPair = pair;
+                matchedStartStr = match[0];
+            }
+        }
+
+        // If no tag found, remaining is text
+        if (!matchedPair) {
+            const content = text.slice(currentIndex);
+            if (content) segments.push({ type: 'text', content });
+            break;
+        }
+
+        // Text before tag
+        if (nearestTagIndex > currentIndex) {
+            segments.push({ type: 'text', content: text.slice(currentIndex, nearestTagIndex) });
+        }
+
+        // Find matching end tag
+        const contentStartIndex = nearestTagIndex + matchedStartStr.length;
+        const endRegex = new RegExp(matchedPair.end, 'gi');
+        endRegex.lastIndex = contentStartIndex;
+        const endMatch = endRegex.exec(text);
+
+        if (endMatch) {
+            segments.push({ 
+                type: 'thought', 
+                content: text.slice(contentStartIndex, endMatch.index),
+                isComplete: true 
+            });
+            currentIndex = endMatch.index + endMatch[0].length;
+        } else {
+            // No end tag -> incomplete thought till end
+            segments.push({ 
+                type: 'thought', 
+                content: text.slice(contentStartIndex), 
+                isComplete: false 
+            });
+            break;
+        }
+    }
+    
+    return segments;
+  };
+
   // --- INITIALIZATION & HYDRATION ---
 
   // 1. Initial Load from LocalStorage + IndexedDB Hydration
@@ -565,14 +637,6 @@ const App: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const parseMessageContent = (text: string) => {
-    const xmlMatch = text.match(/<think>([\s\S]*?)(?:<\/think>|$)/);
-    if (xmlMatch) return { hasThought: true, thought: xmlMatch[1], isComplete: text.includes('</think>'), mainContent: text.replace(xmlMatch[0], '').trim() };
-    const bracketMatch = text.match(/\[THINK\]([\s\S]*?)(?:\[\/THINK\]|$)/i);
-    if (bracketMatch) return { hasThought: true, thought: bracketMatch[1], isComplete: text.includes('[/THINK]') || text.includes('[/think]'), mainContent: text.replace(bracketMatch[0], '').trim() };
-    return { hasThought: false, thought: '', isComplete: true, mainContent: text };
-  };
-
   const executeStream = async (sessionId: string, historyMessages: Message[], userText: string, userAttachments: FileAttachment[]) => {
     setIsStreaming(true);
     setStreamingSessionId(sessionId);
@@ -632,6 +696,7 @@ const App: React.FC = () => {
               const lastMsg = msgs[msgs.length - 1];
               if (lastMsg?.role === Role.Model) {
                 lastMsg.text = bufferedText; 
+                // Don't append abort message if thought is active, might confuse parser
                 if (!lastMsg.text.includes('<think>') && !lastMsg.text.includes('[THINK]')) lastMsg.text += "\n\n_⛔ Generation stopped by user_";
               }
               return { ...s, messages: msgs };
@@ -933,11 +998,8 @@ const App: React.FC = () => {
              </div>
           ) : (
             currentSession.messages.map((msg, index) => {
-              const contentParts = msg.role === Role.Model ? parseMessageContent(msg.text) : null;
+              const segments = msg.role === Role.Model ? parseMixedContent(msg.text) : [];
               const isWaitingForFirstToken = isStreaming && streamingSessionId === currentSession.id && msg.role === Role.Model && msg.text === '' && index === currentSession.messages.length - 1;
-              const isThinkingTruncated = contentParts && contentParts.hasThought && !contentParts.isComplete && !isStreaming;
-              
-              // Pin logic: attach ref to the assistant's response start (the very last message)
               const isAssistantActiveTurn = msg.role === Role.Model && index === currentSession.messages.length - 1;
 
               return (
@@ -977,13 +1039,30 @@ const App: React.FC = () => {
                      {msg.role === Role.Model ? (
                         <div className="markdown-body">
                            {isWaitingForFirstToken && <div className="flex items-center gap-1 h-6"><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div></div>}
-                           {contentParts?.hasThought && <ThinkingProcess thought={isThinkingTruncated ? "" : contentParts.thought} isComplete={contentParts.isComplete} isTruncated={!!isThinkingTruncated} lang={lang} />}
-                           <ReactMarkdown 
-                              remarkPlugins={[remarkGfm]}
-                              components={markdownComponents}
-                           >
-                              {isThinkingTruncated ? (contentParts.thought + "\n\n" + contentParts.mainContent) : (contentParts ? contentParts.mainContent : msg.text)}
-                           </ReactMarkdown>
+                           
+                           {segments.map((segment, idx) => {
+                             if (segment.type === 'thought') {
+                               return (
+                                 <ThinkingProcess 
+                                   key={idx}
+                                   thought={segment.content}
+                                   isComplete={!!segment.isComplete}
+                                   isTruncated={!segment.isComplete && !isStreaming}
+                                   lang={lang}
+                                 />
+                               );
+                             } else {
+                               return (
+                                 <ReactMarkdown 
+                                    key={idx}
+                                    remarkPlugins={[remarkGfm]}
+                                    components={markdownComponents}
+                                 >
+                                    {segment.content}
+                                 </ReactMarkdown>
+                               );
+                             }
+                           })}
                         </div>
                      ) : <div className="whitespace-pre-wrap">{msg.text}</div>}
                    </div>
