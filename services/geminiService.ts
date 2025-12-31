@@ -535,8 +535,10 @@ export const streamChatResponse = async (
 
                         // Handle Tool Calls
                         if (delta.tool_calls) {
-                           delta.tool_calls.forEach((tc: any) => {
-                               const index = tc.index || 0;
+                           delta.tool_calls.forEach((tc: any, i: number) => {
+                               // OpenAI standard requires 'index', but some backends (e.g. some Rust impls) might omit it
+                               // if they send the whole array. We fall back to array index 'i' to separate them.
+                               const index = (tc.index !== undefined && tc.index !== null) ? tc.index : i;
                                
                                if (!accumulatedToolCalls[index]) {
                                    accumulatedToolCalls[index] = {

@@ -116,6 +116,9 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated, lang }: { thought: 
           className="mt-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-dark-900 p-3 rounded-md whitespace-pre-wrap leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200 max-h-80 overflow-y-auto custom-scrollbar"
         >
           {thought}
+          {!thought && !isComplete && (
+             <span className="animate-pulse opacity-50">...</span>
+          )}
           {isTruncated && (
              <div className="mt-3 pt-2 border-t border-amber-200 dark:border-amber-900/30 text-amber-600 dark:text-amber-500 text-xs italic flex items-center gap-1">
                 {t.thinkingTruncatedWarning}
@@ -275,7 +278,7 @@ const App: React.FC = () => {
 
     // Find the earliest starting tag in the text
     for (const pair of tagPairs) {
-        // Reset lastIndex to ensure consistent behavior
+        // Reset lastIndex to ensure consistent behavior - though strictly not needed for non-global, safe practice
         pair.start.lastIndex = 0;
         const match = pair.start.exec(text);
         if (match) {
