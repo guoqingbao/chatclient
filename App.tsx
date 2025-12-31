@@ -260,61 +260,63 @@ const App: React.FC = () => {
   }), []);
 
   // --- PARSER FOR MESSAGE CONTENT ---
-  // Simplified logic: finds the *first* occurring reasoning block (if any) and splits content.
-  // Supports strictly one reasoning block per message to avoid complexity.
+  // Finds the first reasoning block using explicit Regex matching to avoid dynamic RegExp issues.
   const parseMessageContent = (text: string) => {
-    const tagDefinitions = [
-        { start: '<think>', end: '</think>' },
-        { start: '<|think|>', end: '<|/think|>' },
-        { start: '[THINK]', end: '[/THINK]' },
-        { start: '<thought>', end: '</thought>' }
+    // Explicit regex literals for robustness
+    const tagPairs = [
+        { start: /<think>/i, end: /<\/think>/i },
+        { start: /<\|think\|>/i, end: /<\|\/think\|>/i },
+        { start: /\[THINK\]/i, end: /\[\/THINK\]/i },
+        { start: /<thought>/i, end: /<\/thought>/i }
     ];
 
-    let firstTagMatch: { start: number, def: typeof tagDefinitions[0] } | null = null;
+    let bestStartMatch: RegExpExecArray | null = null;
+    let bestPair = null;
 
-    for (const def of tagDefinitions) {
-        // Dynamic regex escaping to ensure [ ] | are treated as literals
-        const escapeRegex = (s: string) => s.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const startPattern = new RegExp(escapeRegex(def.start), 'i');
-        const match = startPattern.exec(text);
+    // Find the earliest starting tag in the text
+    for (const pair of tagPairs) {
+        // Reset lastIndex to ensure consistent behavior
+        pair.start.lastIndex = 0;
+        const match = pair.start.exec(text);
         if (match) {
-            if (firstTagMatch === null || match.index < firstTagMatch.start) {
-                firstTagMatch = { start: match.index, def };
+            if (!bestStartMatch || match.index < bestStartMatch.index) {
+                bestStartMatch = match;
+                bestPair = pair;
             }
         }
     }
 
-    if (!firstTagMatch) {
+    if (!bestStartMatch || !bestPair) {
         return { thought: null, content: text, isThinking: false };
     }
 
-    const { start, def } = firstTagMatch;
-    // Re-run exec to get exact matched length (handling case sensitivity if any)
-    const escapeRegex = (s: string) => s.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-    const startPattern = new RegExp(escapeRegex(def.start), 'i');
-    const match = startPattern.exec(text); 
-    const startTagLength = match ? match[0].length : def.start.length;
-
-    const contentAfterStart = text.slice(start + startTagLength);
-    const endPattern = new RegExp(escapeRegex(def.end), 'i');
-    const endMatch = endPattern.exec(contentAfterStart);
+    const startIndex = bestStartMatch.index;
+    const startTagLength = bestStartMatch[0].length;
+    
+    // Content after the start tag
+    const contentAfterStart = text.slice(startIndex + startTagLength);
+    
+    // Check if the end tag exists in the remaining content
+    bestPair.end.lastIndex = 0;
+    const endMatch = bestPair.end.exec(contentAfterStart);
 
     if (endMatch) {
         // Complete thought
-        const thought = contentAfterStart.slice(0, endMatch.index);
-        const afterThought = contentAfterStart.slice(endMatch.index + endMatch[0].length);
-        const beforeThought = text.slice(0, start);
+        const thoughtContent = contentAfterStart.slice(0, endMatch.index);
+        const contentAfterEnd = contentAfterStart.slice(endMatch.index + endMatch[0].length);
+        const contentBeforeStart = text.slice(0, startIndex);
+        
         return { 
-            thought, 
-            content: (beforeThought + afterThought).trim(), 
+            thought: thoughtContent, 
+            content: (contentBeforeStart + contentAfterEnd).trim(), 
             isThinking: false 
         };
     } else {
-        // Incomplete thought (ongoing)
-        const beforeThought = text.slice(0, start);
+        // Incomplete/Streaming thought
+        const contentBeforeStart = text.slice(0, startIndex);
         return {
             thought: contentAfterStart,
-            content: beforeThought.trim(), // Don't show thinking content in main area
+            content: contentBeforeStart.trim(),
             isThinking: true
         };
     }
