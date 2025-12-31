@@ -267,12 +267,13 @@ const App: React.FC = () => {
     let currentIndex = 0;
     
     // Tag pairs. Order doesn't strictly matter for "earliest" match logic.
-    // FIX: Escape special characters in strings passed to RegExp constructor to avoid false matches (e.g. <|think|> vs <tool_call>)
+    // NOTE: Special characters like | and [ must be doubly escaped in the string literals 
+    // to be treated as literals in the final RegExp (e.g. '\\|' becomes '\|' in regex).
     const tagPairs = [
         { start: '<think>', end: '</think>' },
-        { start: '<\\|think\\|>', end: '<\\|/think\\|>' }, // Correctly escaped pipe for regex
+        { start: '<\\|think\\|>', end: '<\\|/think\\|>' }, 
         { start: '<thought>', end: '</thought>' },
-        { start: '\\[THINK\\]', end: '\\[/THINK\\]' } // Regex escaped for literal [THINK]
+        { start: '\\[THINK\\]', end: '\\[/THINK\\]' } 
     ];
 
     while (currentIndex < text.length) {
@@ -705,10 +706,17 @@ const App: React.FC = () => {
        setSessions(prev => prev.map(s => {
           if (s.id === sessionId) {
             const msgs = [...s.messages];
-            const lastMsg = msgs[msgs.length - 1];
-            if (lastMsg?.role === Role.Model) {
-                 if (lastMsg.text !== bufferedText) lastMsg.text = bufferedText;
-                 if (bufferedToolCalls.length > 0) lastMsg.toolCalls = bufferedToolCalls;
+            // CRITICAL: We must modify a COPY of the message to ensure React state immutability triggers re-renders,
+            // especially for object properties like toolCalls
+            if (msgs.length > 0) {
+                 const lastIndex = msgs.length - 1;
+                 const lastMsg = { ...msgs[lastIndex] }; 
+                 
+                 if (lastMsg.role === Role.Model) {
+                     if (lastMsg.text !== bufferedText) lastMsg.text = bufferedText;
+                     if (bufferedToolCalls.length > 0) lastMsg.toolCalls = bufferedToolCalls;
+                     msgs[lastIndex] = lastMsg;
+                 }
             }
             return { ...s, messages: msgs };
           }
@@ -729,10 +737,14 @@ const App: React.FC = () => {
       setSessions(prev => prev.map(s => {
           if (s.id === sessionId) {
             const msgs = [...s.messages];
-            const lastMsg = msgs[msgs.length - 1];
-            if (lastMsg?.role === Role.Model) {
-                lastMsg.text = bufferedText;
-                if (bufferedToolCalls.length > 0) lastMsg.toolCalls = bufferedToolCalls;
+            if (msgs.length > 0) {
+                const lastIndex = msgs.length - 1;
+                const lastMsg = { ...msgs[lastIndex] };
+                if (lastMsg.role === Role.Model) {
+                    lastMsg.text = bufferedText;
+                    if (bufferedToolCalls.length > 0) lastMsg.toolCalls = bufferedToolCalls;
+                    msgs[lastIndex] = lastMsg;
+                }
             }
             return { ...s, messages: msgs };
           }
@@ -748,11 +760,15 @@ const App: React.FC = () => {
           setSessions(prev => prev.map(s => {
             if (s.id === sessionId) {
               const msgs = [...s.messages];
-              const lastMsg = msgs[msgs.length - 1];
-              if (lastMsg?.role === Role.Model) {
-                lastMsg.text = bufferedText; 
-                // Don't append abort message if thought is active, might confuse parser
-                if (!lastMsg.text.includes('<think>') && !lastMsg.text.includes('[THINK]')) lastMsg.text += "\n\n_⛔ Generation stopped by user_";
+              if (msgs.length > 0) {
+                  const lastIndex = msgs.length - 1;
+                  const lastMsg = { ...msgs[lastIndex] };
+                  if (lastMsg.role === Role.Model) {
+                    lastMsg.text = bufferedText; 
+                    // Don't append abort message if thought is active, might confuse parser
+                    if (!lastMsg.text.includes('<think>') && !lastMsg.text.includes('[THINK]')) lastMsg.text += "\n\n_⛔ Generation stopped by user_";
+                    msgs[lastIndex] = lastMsg;
+                  }
               }
               return { ...s, messages: msgs };
             }
@@ -762,10 +778,14 @@ const App: React.FC = () => {
            setSessions(prev => prev.map(s => {
                 if (s.id === sessionId) {
                   const msgs = [...s.messages];
-                  const lastMsg = msgs[msgs.length - 1];
-                  if (lastMsg) {
-                    lastMsg.text = `${bufferedText || lastMsg.text}\n\n**Error:** ${error.message || "Failed to generate response"}`;
-                    lastMsg.isError = true;
+                  if (msgs.length > 0) {
+                      const lastIndex = msgs.length - 1;
+                      const lastMsg = { ...msgs[lastIndex] };
+                      if (lastMsg) {
+                        lastMsg.text = `${bufferedText || lastMsg.text}\n\n**Error:** ${error.message || "Failed to generate response"}`;
+                        lastMsg.isError = true;
+                        msgs[lastIndex] = lastMsg;
+                      }
                   }
                   return { ...s, messages: msgs };
                 }
@@ -1096,9 +1116,13 @@ const App: React.FC = () => {
                            {isWaitingForFirstToken && <div className="flex items-center gap-1 h-6"><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div></div>}
                            
                            {/* Render Tool Calls if present */}
-                           {msg.toolCalls && msg.toolCalls.map((tc, idx) => (
-                               <ToolCallDisplay key={tc.id || idx} toolCall={tc} />
-                           ))}
+                           {msg.toolCalls && msg.toolCalls.length > 0 && (
+                             <div className="space-y-2 mb-2">
+                               {msg.toolCalls.map((tc, idx) => (
+                                 <ToolCallDisplay key={tc.id || idx} toolCall={tc} />
+                               ))}
+                             </div>
+                           )}
 
                            {segments.map((segment, idx) => {
                              if (segment.type === 'thought') {
