@@ -267,9 +267,10 @@ const App: React.FC = () => {
     let currentIndex = 0;
     
     // Tag pairs. Order doesn't strictly matter for "earliest" match logic.
+    // FIX: Escape special characters in strings passed to RegExp constructor to avoid false matches (e.g. <|think|> vs <tool_call>)
     const tagPairs = [
         { start: '<think>', end: '</think>' },
-        { start: '<|think|>', end: '<|/think|>' },
+        { start: '<\\|think\\|>', end: '<\\|/think\\|>' }, // Correctly escaped pipe for regex
         { start: '<thought>', end: '</thought>' },
         { start: '\\[THINK\\]', end: '\\[/THINK\\]' } // Regex escaped for literal [THINK]
     ];
