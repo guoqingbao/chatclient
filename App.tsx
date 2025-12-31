@@ -259,78 +259,65 @@ const App: React.FC = () => {
     }
   }), []);
 
-  // --- PARSER FOR INTERLEAVED THOUGHTS ---
-  const parseMixedContent = (text: string) => {
-    const segments: { type: 'text' | 'thought', content: string, isComplete?: boolean }[] = [];
-    if (!text) return segments;
-
-    let currentIndex = 0;
-    
-    // Tag pairs. Order doesn't strictly matter for "earliest" match logic.
-    // NOTE: using \x5B for [ and \x5D for ] to avoid any ambiguity or regex character class issues.
-    // This ensures [THINK] is treated as a literal string tag, not a character class matching T,H,I,N,K.
-    const tagPairs = [
+  // --- PARSER FOR MESSAGE CONTENT ---
+  // Simplified logic: finds the *first* occurring reasoning block (if any) and splits content.
+  // Supports strictly one reasoning block per message to avoid complexity.
+  const parseMessageContent = (text: string) => {
+    const tagDefinitions = [
         { start: '<think>', end: '</think>' },
-        { start: '<\\|think\\|>', end: '<\\|/think\\|>' }, 
-        { start: '<thought>', end: '</thought>' },
-        { start: '\\x5BTHINK\\x5D', end: '\\x5B/THINK\\x5D' } 
+        { start: '<|think|>', end: '<|/think|>' },
+        { start: '[THINK]', end: '[/THINK]' },
+        { start: '<thought>', end: '</thought>' }
     ];
 
-    while (currentIndex < text.length) {
-        let nearestTagIndex = Infinity;
-        let matchedPair = null;
-        let matchedStartStr = '';
+    let firstTagMatch: { start: number, def: typeof tagDefinitions[0] } | null = null;
 
-        // Find earliest matching start tag
-        for (const pair of tagPairs) {
-            const regex = new RegExp(pair.start, 'gi');
-            regex.lastIndex = currentIndex;
-            const match = regex.exec(text);
-            
-            if (match && match.index < nearestTagIndex) {
-                nearestTagIndex = match.index;
-                matchedPair = pair;
-                matchedStartStr = match[0];
+    for (const def of tagDefinitions) {
+        // Dynamic regex escaping to ensure [ ] | are treated as literals
+        const escapeRegex = (s: string) => s.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const startPattern = new RegExp(escapeRegex(def.start), 'i');
+        const match = startPattern.exec(text);
+        if (match) {
+            if (firstTagMatch === null || match.index < firstTagMatch.start) {
+                firstTagMatch = { start: match.index, def };
             }
         }
-
-        // If no tag found, remaining is text
-        if (!matchedPair) {
-            const content = text.slice(currentIndex);
-            if (content) segments.push({ type: 'text', content });
-            break;
-        }
-
-        // Text before tag
-        if (nearestTagIndex > currentIndex) {
-            segments.push({ type: 'text', content: text.slice(currentIndex, nearestTagIndex) });
-        }
-
-        // Find matching end tag
-        const contentStartIndex = nearestTagIndex + matchedStartStr.length;
-        const endRegex = new RegExp(matchedPair.end, 'gi');
-        endRegex.lastIndex = contentStartIndex;
-        const endMatch = endRegex.exec(text);
-
-        if (endMatch) {
-            segments.push({ 
-                type: 'thought', 
-                content: text.slice(contentStartIndex, endMatch.index),
-                isComplete: true 
-            });
-            currentIndex = endMatch.index + endMatch[0].length;
-        } else {
-            // No end tag -> incomplete thought till end
-            segments.push({ 
-                type: 'thought', 
-                content: text.slice(contentStartIndex), 
-                isComplete: false 
-            });
-            break;
-        }
     }
-    
-    return segments;
+
+    if (!firstTagMatch) {
+        return { thought: null, content: text, isThinking: false };
+    }
+
+    const { start, def } = firstTagMatch;
+    // Re-run exec to get exact matched length (handling case sensitivity if any)
+    const escapeRegex = (s: string) => s.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const startPattern = new RegExp(escapeRegex(def.start), 'i');
+    const match = startPattern.exec(text); 
+    const startTagLength = match ? match[0].length : def.start.length;
+
+    const contentAfterStart = text.slice(start + startTagLength);
+    const endPattern = new RegExp(escapeRegex(def.end), 'i');
+    const endMatch = endPattern.exec(contentAfterStart);
+
+    if (endMatch) {
+        // Complete thought
+        const thought = contentAfterStart.slice(0, endMatch.index);
+        const afterThought = contentAfterStart.slice(endMatch.index + endMatch[0].length);
+        const beforeThought = text.slice(0, start);
+        return { 
+            thought, 
+            content: (beforeThought + afterThought).trim(), 
+            isThinking: false 
+        };
+    } else {
+        // Incomplete thought (ongoing)
+        const beforeThought = text.slice(0, start);
+        return {
+            thought: contentAfterStart,
+            content: beforeThought.trim(), // Don't show thinking content in main area
+            isThinking: true
+        };
+    }
   };
 
   // --- INITIALIZATION & HYDRATION ---
@@ -1083,7 +1070,6 @@ const App: React.FC = () => {
              </div>
           ) : (
             currentSession.messages.map((msg, index) => {
-              const segments = msg.role === Role.Model ? parseMixedContent(msg.text) : [];
               const isWaitingForFirstToken = isStreaming && streamingSessionId === currentSession.id && msg.role === Role.Model && msg.text === '' && index === currentSession.messages.length - 1;
               const isAssistantActiveTurn = msg.role === Role.Model && index === currentSession.messages.length - 1;
 
@@ -1134,29 +1120,28 @@ const App: React.FC = () => {
                              </div>
                            )}
 
-                           {segments.map((segment, idx) => {
-                             if (segment.type === 'thought') {
+                           {/* Render Content & Thought */}
+                           {(() => {
+                               const { thought, content, isThinking } = parseMessageContent(msg.text);
                                return (
-                                 <ThinkingProcess 
-                                   key={idx}
-                                   thought={segment.content}
-                                   isComplete={!!segment.isComplete}
-                                   isTruncated={!segment.isComplete && !isStreaming}
-                                   lang={lang}
-                                 />
-                               );
-                             } else {
-                               return (
-                                 <ReactMarkdown 
-                                    key={idx}
-                                    remarkPlugins={[remarkGfm]}
-                                    components={markdownComponents}
-                                 >
-                                    {segment.content}
-                                 </ReactMarkdown>
-                               );
-                             }
-                           })}
+                                   <>
+                                      {thought !== null && (
+                                          <ThinkingProcess 
+                                              thought={thought}
+                                              isComplete={!isThinking}
+                                              isTruncated={isThinking && !isStreaming}
+                                              lang={lang}
+                                          />
+                                      )}
+                                      <ReactMarkdown 
+                                          remarkPlugins={[remarkGfm]}
+                                          components={markdownComponents}
+                                      >
+                                          {content}
+                                      </ReactMarkdown>
+                                   </>
+                               )
+                           })()}
                         </div>
                      ) : <div className="whitespace-pre-wrap">{msg.text}</div>}
                    </div>
