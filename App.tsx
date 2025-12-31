@@ -267,13 +267,13 @@ const App: React.FC = () => {
     let currentIndex = 0;
     
     // Tag pairs. Order doesn't strictly matter for "earliest" match logic.
-    // NOTE: Special characters like | and [ must be doubly escaped in the string literals 
-    // to be treated as literals in the final RegExp (e.g. '\\|' becomes '\|' in regex).
+    // NOTE: using \x5B for [ and \x5D for ] to avoid any ambiguity or regex character class issues.
+    // This ensures [THINK] is treated as a literal string tag, not a character class matching T,H,I,N,K.
     const tagPairs = [
         { start: '<think>', end: '</think>' },
         { start: '<\\|think\\|>', end: '<\\|/think\\|>' }, 
         { start: '<thought>', end: '</thought>' },
-        { start: '\\[THINK\\]', end: '\\[/THINK\\]' } 
+        { start: '\\x5BTHINK\\x5D', end: '\\x5B/THINK\\x5D' } 
     ];
 
     while (currentIndex < text.length) {
@@ -706,17 +706,27 @@ const App: React.FC = () => {
        setSessions(prev => prev.map(s => {
           if (s.id === sessionId) {
             const msgs = [...s.messages];
-            // CRITICAL: We must modify a COPY of the message to ensure React state immutability triggers re-renders,
-            // especially for object properties like toolCalls
             if (msgs.length > 0) {
-                 const lastIndex = msgs.length - 1;
-                 const lastMsg = { ...msgs[lastIndex] }; 
-                 
-                 if (lastMsg.role === Role.Model) {
-                     if (lastMsg.text !== bufferedText) lastMsg.text = bufferedText;
-                     if (bufferedToolCalls.length > 0) lastMsg.toolCalls = bufferedToolCalls;
-                     msgs[lastIndex] = lastMsg;
-                 }
+                const lastIndex = msgs.length - 1;
+                // Create shallow copy to trigger React update on property change
+                const lastMsg = { ...msgs[lastIndex] };
+                
+                if (lastMsg.role === Role.Model) {
+                     let hasChange = false;
+                     if (lastMsg.text !== bufferedText) {
+                         lastMsg.text = bufferedText;
+                         hasChange = true;
+                     }
+                     // Always update toolCalls if we have them, as internal props might change (args streaming)
+                     if (bufferedToolCalls.length > 0) {
+                         lastMsg.toolCalls = bufferedToolCalls;
+                         hasChange = true;
+                     }
+                     
+                     if (hasChange) {
+                         msgs[lastIndex] = lastMsg;
+                     }
+                }
             }
             return { ...s, messages: msgs };
           }
