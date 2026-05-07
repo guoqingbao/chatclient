@@ -116,10 +116,15 @@ const prepareMessages = (
             contentParts.push({ type: "input_text", text: "" });
         }
 
-        messages.push({
+        const messageObj: any = {
             role: msg.role === Role.User ? 'user' : 'assistant',
             content: contentParts
-        });
+        };
+        if (msg.role === Role.Model) {
+            if (msg.reasoningText) messageObj.reasoning_content = msg.reasoningText;
+            if (msg.toolCalls && msg.toolCalls.length > 0) messageObj.tool_calls = msg.toolCalls;
+        }
+        messages.push(messageObj);
 
     } else {
         // STANDARD TEXT ONLY MODE
@@ -135,10 +140,15 @@ const prepareMessages = (
           }
         }
 
-        messages.push({
+        const messageObj: any = {
           role: msg.role === Role.User ? 'user' : 'assistant',
           content: content
-        });
+        };
+        if (msg.role === Role.Model) {
+            if (msg.reasoningText) messageObj.reasoning_content = msg.reasoningText;
+            if (msg.toolCalls && msg.toolCalls.length > 0) messageObj.tool_calls = msg.toolCalls;
+        }
+        messages.push(messageObj);
     }
   });
 
@@ -370,7 +380,7 @@ export const streamChatResponse = async (
   attachments: FileAttachment[],
   settings: AppSettings,
   signal: AbortSignal,
-  onChunk: (text: string, toolCalls: ToolCall[]) => void,
+  onChunk: (text: string, toolCalls: ToolCall[], reasoningText: string) => void,
   isMultimodalSupported: boolean,
   useSampling: boolean = false
 ): Promise<string> => {
@@ -490,6 +500,7 @@ export const streamChatResponse = async (
     const decoder = new TextDecoder("utf-8");
     let done = false;
     let accumulatedText = "";
+    let accumulatedReasoning = "";
     // Object to track tool calls by index. 
     // OpenAI stream can send multiple tool calls in parallel chunks.
     const accumulatedToolCalls: Record<number, ToolCall> = {};
@@ -533,6 +544,11 @@ export const streamChatResponse = async (
                           accumulatedText += delta.content;
                         }
 
+                        // Handle Reasoning Content
+                        if (delta.reasoning_content) {
+                          accumulatedReasoning += delta.reasoning_content;
+                        }
+
                         // Handle Tool Calls
                         if (delta.tool_calls) {
                            delta.tool_calls.forEach((tc: any, i: number) => {
@@ -557,8 +573,8 @@ export const streamChatResponse = async (
                            });
                         }
                         
-                        // Emit both text and current state of tool calls
-                        onChunk(accumulatedText, Object.values(accumulatedToolCalls));
+                        // Emit text, tool calls, and reasoning
+                        onChunk(accumulatedText, Object.values(accumulatedToolCalls), accumulatedReasoning);
                     }
                   } catch (e) {
                     // JSON parse error usually means packet split (should be handled by buffer now)

@@ -26,6 +26,7 @@ export interface Message {
   id: string;
   role: Role;
   text: string;
+  reasoningText?: string;
   attachments?: FileAttachment[];
   toolCalls?: ToolCall[];
   timestamp: number;

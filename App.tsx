@@ -263,8 +263,17 @@ const App: React.FC = () => {
   }), []);
 
   // --- PARSER FOR MESSAGE CONTENT ---
-  // Finds the first reasoning block using explicit Regex matching to avoid dynamic RegExp issues.
-  const parseMessageContent = (text: string) => {
+  const parseMessageContent = (msg: Message, isStreamingMsg: boolean = false) => {
+    if (msg.reasoningText) {
+        return {
+            thought: msg.reasoningText,
+            content: msg.text,
+            // If we are still streaming and the actual output text hasn't started much, consider it 'thinking'
+            isThinking: isStreamingMsg && msg.text.length === 0
+        };
+    }
+
+    const text = msg.text || '';
     // Explicit regex literals for robustness
     const tagPairs = [
         { start: /<think>/i, end: /<\/think>/i },
@@ -692,6 +701,7 @@ const App: React.FC = () => {
     scrollToNewTurnRef.current = true;
 
     let bufferedText = "";
+    let bufferedReasoning = "";
     let bufferedToolCalls: ToolCall[] = [];
     let animationFrameId: number;
     const flushBuffer = () => {
@@ -707,6 +717,10 @@ const App: React.FC = () => {
                      let hasChange = false;
                      if (lastMsg.text !== bufferedText) {
                          lastMsg.text = bufferedText;
+                         hasChange = true;
+                     }
+                     if (lastMsg.reasoningText !== bufferedReasoning) {
+                         lastMsg.reasoningText = bufferedReasoning;
                          hasChange = true;
                      }
                      // Always update toolCalls if we have them, as internal props might change (args streaming)
@@ -729,9 +743,12 @@ const App: React.FC = () => {
     animationFrameId = requestAnimationFrame(flushBuffer);
 
     try {
-      await streamChatResponse(sessionId, historyMessages.filter(m => m.role !== Role.Model || m.text.length > 0), userText, userAttachments, settings, abortControllerRef.current.signal, (chunkText, chunkToolCalls) => {
+      await streamChatResponse(sessionId, historyMessages.filter(m => m.role !== Role.Model || m.text.length > 0), userText, userAttachments, settings, abortControllerRef.current.signal, (chunkText, chunkToolCalls, chunkReasoningText) => {
           if (abortControllerRef.current?.signal.aborted) return;
           bufferedText = chunkText;
+          if (chunkReasoningText) {
+              bufferedReasoning = chunkReasoningText;
+          }
           if (chunkToolCalls && chunkToolCalls.length > 0) {
               bufferedToolCalls = chunkToolCalls;
           }
@@ -744,6 +761,7 @@ const App: React.FC = () => {
                 const lastMsg = { ...msgs[lastIndex] };
                 if (lastMsg.role === Role.Model) {
                     lastMsg.text = bufferedText;
+                    if (bufferedReasoning) lastMsg.reasoningText = bufferedReasoning;
                     if (bufferedToolCalls.length > 0) lastMsg.toolCalls = bufferedToolCalls;
                     msgs[lastIndex] = lastMsg;
                 }
@@ -1127,7 +1145,7 @@ const App: React.FC = () => {
 
                            {/* Render Content & Thought */}
                            {(() => {
-                               const { thought, content, isThinking } = parseMessageContent(msg.text);
+                               const { thought, content, isThinking } = parseMessageContent(msg, isStreaming && isAssistantActiveTurn);
                                return (
                                    <>
                                       {thought !== null && (
