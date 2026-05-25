@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, memo, lazy, Suspense } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -11,7 +11,10 @@ import CodeBlock from './components/CodeBlock';
 import { saveAttachmentToDB, getAttachmentFromDB, pruneOrphanedAttachments, deleteAttachmentFromDB } from './services/db';
 import { translations, Language } from './utils/translations';
 
-const ToolCallDisplay = ({ toolCall }: { toolCall: ToolCall }) => {
+const LARGE_CONTENT_THRESHOLD = 8000;
+const STREAMING_FLUSH_INTERVAL = 48;
+
+const ToolCallDisplay = memo(({ toolCall }: { toolCall: ToolCall }) => {
     let args: Record<string, any> = {};
     let isParseError = false;
     
@@ -53,7 +56,7 @@ const ToolCallDisplay = ({ toolCall }: { toolCall: ToolCall }) => {
             </div>
         </div>
     );
-};
+});
 
 const ThinkingProcess = ({ thought, isComplete, isTruncated, lang }: { thought: string, isComplete: boolean, isTruncated: boolean, lang: Language }) => {
   const [isOpen, setIsOpen] = useState(!isComplete || isTruncated);
@@ -193,6 +196,232 @@ const generateAttachmentKey = (sessionId: string, messageId: string, index: numb
     return `${sessionId}_${messageId}_${index}`;
 };
 
+const parseMessageContentStatic = (msg: Message, isStreamingMsg: boolean = false) => {
+    const thought = msg.reasoningText || null;
+    const content = msg.text || '';
+    const isThinking = isStreamingMsg && !!thought && content.length === 0;
+    return { thought, content, isThinking };
+};
+
+interface LargeContentRendererProps {
+    content: string;
+    remarkPlugins: any[];
+    components: any;
+}
+
+const LargeContentRenderer = memo(({ content, remarkPlugins, components }: LargeContentRendererProps) => {
+    const isLarge = content.length > LARGE_CONTENT_THRESHOLD;
+    const [renderFull, setRenderFull] = useState(!isLarge);
+
+    useEffect(() => {
+        if (isLarge && !renderFull) {
+            const id = requestIdleCallback(() => setRenderFull(true), { timeout: 200 });
+            return () => cancelIdleCallback(id);
+        }
+    }, [isLarge, renderFull]);
+
+    if (!renderFull) {
+        const preview = content.slice(0, LARGE_CONTENT_THRESHOLD);
+        return (
+            <>
+                <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+                    {preview}
+                </ReactMarkdown>
+                <div className="text-xs text-gray-400 dark:text-gray-600 italic py-2 animate-pulse">
+                    Rendering remaining content...
+                </div>
+            </>
+        );
+    }
+
+    return (
+        <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+            {content}
+        </ReactMarkdown>
+    );
+});
+
+interface StreamingContentRendererProps {
+    content: string;
+    remarkPlugins: any[];
+    components: any;
+}
+
+const STREAMING_MD_THRESHOLD = 3000;
+
+const sanitizeStreamingTail = (text: string): string => {
+    const lastOpenAngle = text.lastIndexOf('<');
+    if (lastOpenAngle === -1) return text;
+    const afterAngle = text.slice(lastOpenAngle);
+    if (!afterAngle.includes('>')) {
+        return text.slice(0, lastOpenAngle) + '\\<' + afterAngle.slice(1);
+    }
+    return text;
+};
+
+const sanitizeIncompleteCodeFence = (text: string): string => {
+    const lastFence = text.lastIndexOf('```');
+    if (lastFence === -1) return text;
+    const fenceCount = (text.match(/```/g) || []).length;
+    if (fenceCount % 2 !== 0) {
+        return text + '\n```';
+    }
+    return text;
+};
+
+const StreamingContentRenderer = memo(({ content, remarkPlugins, components }: StreamingContentRendererProps) => {
+    const safeContent = sanitizeIncompleteCodeFence(sanitizeStreamingTail(content));
+
+    if (safeContent.length <= STREAMING_MD_THRESHOLD) {
+        return (
+            <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+                {safeContent}
+            </ReactMarkdown>
+        );
+    }
+
+    const tailSize = Math.min(STREAMING_MD_THRESHOLD, safeContent.length);
+    const breakIdx = safeContent.lastIndexOf('\n\n', safeContent.length - tailSize);
+    const split = breakIdx > 0 ? breakIdx : safeContent.length - tailSize;
+    const head = safeContent.slice(0, split);
+    const tail = safeContent.slice(split);
+
+    return (
+        <>
+            <div className="whitespace-pre-wrap leading-7 break-words min-w-0">{head}</div>
+            <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+                {tail}
+            </ReactMarkdown>
+        </>
+    );
+});
+
+interface MessageItemProps {
+    msg: Message;
+    index: number;
+    isStreaming: boolean;
+    isStreamingSession: boolean;
+    isLastMessage: boolean;
+    lang: Language;
+    markdownComponents: any;
+    onResend: (index: number) => void;
+    onCopy: (text: string, id: string) => void;
+    onShare: () => void;
+    onEdit: (index: number) => void;
+    copiedMessageId: string | null;
+    botTurnRef: React.MutableRefObject<HTMLDivElement | null>;
+}
+
+const MessageItem = memo(({ msg, index, isStreaming, isStreamingSession, isLastMessage, lang, markdownComponents, onResend, onCopy, onShare, onEdit, copiedMessageId, botTurnRef }: MessageItemProps) => {
+    const t = translations[lang];
+    const isWaitingForFirstToken = isStreaming && isStreamingSession && msg.role === Role.Model && msg.text === '' && isLastMessage;
+    const isAssistantActiveTurn = msg.role === Role.Model && isLastMessage;
+    const isActivelyStreaming = isStreaming && isStreamingSession && isAssistantActiveTurn;
+
+    const remarkPlugins = useMemo(() => [remarkGfm], []);
+
+    const parsedContent = useMemo(() => {
+        return parseMessageContentStatic(msg, isActivelyStreaming);
+    }, [msg.text, msg.reasoningText, isActivelyStreaming]);
+
+    return (
+        <div 
+            key={msg.id} 
+            ref={isAssistantActiveTurn ? botTurnRef as React.Ref<HTMLDivElement> : null}
+            className={`scroll-mt-4 flex gap-4 max-w-4xl xl:max-w-5xl 2xl:max-w-6xl w-full mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}
+        >
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm transition-all duration-300 ${
+                msg.role === Role.User 
+                ? 'bg-gray-100 dark:bg-dark-800 text-gray-500 dark:text-gray-400' 
+                : `bg-black dark:bg-white text-white dark:text-black ${isWaitingForFirstToken || isActivelyStreaming ? 'ring-2 ring-gray-200 dark:ring-gray-700 animate-pulse' : ''}`
+            }`}>
+                {msg.role === Role.User ? <UserIcon className="w-6 h-6" /> : <BotIcon className="w-6 h-6" />}
+            </div>
+            <div className={`flex flex-col min-w-0 ${msg.role === Role.User ? 'max-w-[85%] lg:max-w-[80%] items-end' : 'flex-1 items-start'}`}>
+                <div className="flex items-center gap-2 mb-1 px-1"><span className="text-xs font-semibold text-gray-500 dark:text-gray-400">{msg.role === Role.User ? 'You' : 'ChatClient'}</span></div>
+                <div className={`w-full px-5 py-3.5 rounded-2xl shadow-sm text-sm md:text-base leading-7 overflow-hidden ${msg.role === Role.User ? 'bg-gray-100 dark:bg-dark-800 text-gray-900 dark:text-gray-100 rounded-tr-none' : `text-gray-900 dark:text-gray-100 ${msg.isError ? 'text-red-600 dark:text-red-400' : ''}`}`}>
+                    {msg.attachments?.length ? (
+                        <div className="mb-3 pb-2 border-b border-gray-200 dark:border-gray-700 text-xs flex flex-wrap gap-2">
+                            {msg.attachments.map((file, i) => (
+                                <span key={i} className="flex items-center gap-1 bg-white dark:bg-dark-900 px-2 py-1 rounded border border-gray-200 dark:border-dark-700">
+                                    {file.type.startsWith('image/') ? (
+                                        file.content ? 
+                                        <><img src={file.content} className="w-8 h-8 object-cover rounded border border-gray-300 dark:border-gray-700 mr-1" /><span>🖼️ {file.name}</span></> :
+                                        <span className="text-gray-400 italic">🖼️ {file.name} (loading...)</span>
+                                    ) : <>📄 {file.name} <span className="text-gray-400 dark:text-gray-500 text-[10px]">({file.tokenCount}t)</span></>}
+                                </span>
+                            ))}
+                        </div>
+                    ) : null}
+                    {msg.role === Role.User && msg.attachments?.some(a => a.type.startsWith('image/')) ? (
+                        <div className="mb-4 flex flex-wrap gap-2">{msg.attachments.filter(a => a.type.startsWith('image/')).map((img, idx) => (
+                            img.content ? <img key={idx} src={img.content} className="max-w-full h-auto max-h-[300px] rounded-lg border border-gray-200 dark:border-gray-700" /> : <div key={idx} className="p-4 border border-dashed border-gray-300 dark:border-gray-700 rounded text-gray-400 text-xs animate-pulse">Loading image...</div>
+                        ))}</div>
+                    ) : null}
+                    {msg.role === Role.Model ? (
+                        <div className="markdown-body overflow-x-auto min-w-0">
+                            {isWaitingForFirstToken && <div className="flex items-center gap-1 h-6"><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div></div>}
+                            
+                            {msg.toolCalls && msg.toolCalls.length > 0 && (
+                                <div className="space-y-2 mb-2">
+                                    {msg.toolCalls.map((tc, idx) => (
+                                        <ToolCallDisplay key={tc.id || idx} toolCall={tc} />
+                                    ))}
+                                </div>
+                            )}
+
+                            {parsedContent.thought !== null && (
+                                <ThinkingProcess 
+                                    thought={parsedContent.thought}
+                                    isComplete={!parsedContent.isThinking}
+                                    isTruncated={parsedContent.isThinking && !isStreaming}
+                                    lang={lang}
+                                />
+                            )}
+                            {isActivelyStreaming ? (
+                                <StreamingContentRenderer
+                                    content={parsedContent.content}
+                                    remarkPlugins={remarkPlugins}
+                                    components={markdownComponents}
+                                />
+                            ) : (
+                                <LargeContentRenderer
+                                    content={parsedContent.content}
+                                    remarkPlugins={remarkPlugins}
+                                    components={markdownComponents}
+                                />
+                            )}
+                        </div>
+                    ) : (
+                        <div className={`whitespace-pre-wrap ${msg.text.length > LARGE_CONTENT_THRESHOLD ? 'max-h-[60vh] overflow-y-auto custom-scrollbar' : ''}`}>
+                            {msg.text}
+                        </div>
+                    )}
+                </div>
+                {msg.role === Role.Model && !isStreaming && !msg.isError && (
+                    <div className="flex items-center gap-3 mt-2 px-1 justify-start">
+                        <button onClick={() => onResend(index)} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><RefreshIcon /> {t.redo}</button>
+                        <button onClick={() => onCopy(msg.text, msg.id)} className={`text-xs font-medium flex items-center gap-1.5 transition-colors px-1 ${copiedMessageId === msg.id ? 'text-green-600 dark:text-green-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}>
+                            {copiedMessageId === msg.id ? <CheckIcon /> : <CopyIcon />} 
+                            {copiedMessageId === msg.id ? t.copied : t.copy}
+                        </button>
+                        <button onClick={onShare} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><ShareIcon /> {t.share}</button>
+                    </div>
+                )}
+                {msg.role === Role.User && !isStreaming && <div className="flex items-center gap-3 mt-2 px-1 justify-end"><button onClick={() => onEdit(index)} className="text-xs font-medium text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1 transition-colors bg-gray-50 dark:bg-dark-900 px-2 py-1 rounded"><EditIcon /> {t.edit}</button></div>}
+            </div>
+        </div>
+    );
+}, (prev, next) => {
+    if (prev.msg !== next.msg) return false;
+    if (prev.isStreaming !== next.isStreaming) return false;
+    if (prev.isStreamingSession !== next.isStreamingSession) return false;
+    if (prev.isLastMessage !== next.isLastMessage) return false;
+    if (prev.copiedMessageId !== next.copiedMessageId 
+        && (prev.copiedMessageId === prev.msg.id || next.copiedMessageId === next.msg.id)) return false;
+    return true;
+});
+
 const App: React.FC = () => {
   // --- STATE ---
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -239,7 +468,7 @@ const App: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true); 
-  const botTurnRef = useRef<HTMLDivElement>(null); 
+  const botTurnRef = useRef<HTMLDivElement | null>(null); 
   const scrollToNewTurnRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -262,77 +491,6 @@ const App: React.FC = () => {
     }
   }), []);
 
-  // --- PARSER FOR MESSAGE CONTENT ---
-  const parseMessageContent = (msg: Message, isStreamingMsg: boolean = false) => {
-    if (msg.reasoningText) {
-        return {
-            thought: msg.reasoningText,
-            content: msg.text,
-            // If we are still streaming and the actual output text hasn't started much, consider it 'thinking'
-            isThinking: isStreamingMsg && msg.text.length === 0
-        };
-    }
-
-    const text = msg.text || '';
-    // Explicit regex literals for robustness
-    const tagPairs = [
-        { start: /<think>/i, end: /<\/think>/i },
-        { start: /<\|think\|>/i, end: /<\|\/think\|>/i },
-        { start: /\[THINK\]/i, end: /\[\/THINK\]/i },
-        { start: /<thought>/i, end: /<\/thought>/i }
-    ];
-
-    let bestStartMatch: RegExpExecArray | null = null;
-    let bestPair = null;
-
-    // Find the earliest starting tag in the text
-    for (const pair of tagPairs) {
-        // Reset lastIndex to ensure consistent behavior - though strictly not needed for non-global, safe practice
-        pair.start.lastIndex = 0;
-        const match = pair.start.exec(text);
-        if (match) {
-            if (!bestStartMatch || match.index < bestStartMatch.index) {
-                bestStartMatch = match;
-                bestPair = pair;
-            }
-        }
-    }
-
-    if (!bestStartMatch || !bestPair) {
-        return { thought: null, content: text, isThinking: false };
-    }
-
-    const startIndex = bestStartMatch.index;
-    const startTagLength = bestStartMatch[0].length;
-    
-    // Content after the start tag
-    const contentAfterStart = text.slice(startIndex + startTagLength);
-    
-    // Check if the end tag exists in the remaining content
-    bestPair.end.lastIndex = 0;
-    const endMatch = bestPair.end.exec(contentAfterStart);
-
-    if (endMatch) {
-        // Complete thought
-        const thoughtContent = contentAfterStart.slice(0, endMatch.index);
-        const contentAfterEnd = contentAfterStart.slice(endMatch.index + endMatch[0].length);
-        const contentBeforeStart = text.slice(0, startIndex);
-        
-        return { 
-            thought: thoughtContent, 
-            content: (contentBeforeStart + contentAfterEnd).trim(), 
-            isThinking: false 
-        };
-    } else {
-        // Incomplete/Streaming thought
-        const contentBeforeStart = text.slice(0, startIndex);
-        return {
-            thought: contentAfterStart,
-            content: contentBeforeStart.trim(),
-            isThinking: true
-        };
-    }
-  };
 
   // --- INITIALIZATION & HYDRATION ---
 
@@ -400,37 +558,33 @@ const App: React.FC = () => {
   }, [isHydrated, sessions.length]);
 
   // 3. PERSISTENCE (Hybrid Strategy)
+  const isStreamingRef = useRef(isStreaming);
+  isStreamingRef.current = isStreaming;
+
   useEffect(() => {
-    // Only save if we have successfully loaded first. 
-    // Otherwise we might overwrite existing data with empty state.
     if (!isHydrated) return; 
     
     sessionsRef.current = sessions;
     
     const saveToStorage = async () => {
+        if (isStreamingRef.current) return;
+
         try {
-            // 1. Identify heavy attachments and save to IndexedDB
             const leanSessions = sessions.map(session => ({
                 ...session,
                 messages: session.messages.map(msg => ({
                     ...msg,
                     attachments: msg.attachments?.map((att, idx) => {
-                        // If it has content, save to DB and strip from LS
                         if (att.content && att.content.length > 100) { 
                             const key = generateAttachmentKey(session.id, msg.id, idx);
-                            // Fire and forget save (or await if critical, but we want UI responsive)
                             saveAttachmentToDB(key, att.content);
-                            
-                            // Return lean object for LocalStorage
                             return { ...att, content: '' }; 
                         }
-                        // Small text files can stay in LS
                         return att;
                     })
                 }))
             }));
 
-            // 2. Save lean structure to LocalStorage
             localStorage.setItem('chat_client_sessions', JSON.stringify(leanSessions));
             
         } catch (e) {
@@ -438,12 +592,11 @@ const App: React.FC = () => {
         }
     };
     
-    // Debounce slightly to avoid thrashing IDB on typing, 
-    // though most updates here are message additions which are infrequent enough.
-    const timer = setTimeout(saveToStorage, 500);
+    const delay = isStreaming ? 3000 : 500;
+    const timer = setTimeout(saveToStorage, delay);
     return () => clearTimeout(timer);
 
-  }, [sessions, isHydrated]);
+  }, [sessions, isHydrated, isStreaming]);
 
   // --- OTHER EFFECTS ---
 
@@ -567,11 +720,11 @@ const App: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
   };
 
-  // Modified auto-scroll effect: Block auto-scroll during streaming to support pinned top reading
   useEffect(() => {
     if (shouldAutoScrollRef.current && !isStreaming) {
       scrollToBottom();
     }
+    requestAnimationFrame(() => handleScroll());
   }, [sessions, currentSessionId, isStreaming]);
   
   // Specific effect to handle "Pin to Top" for new turns
@@ -586,15 +739,30 @@ const App: React.FC = () => {
     }
   }, [sessions]);
 
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+
   const handleScroll = () => {
     if (!scrollContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
     const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+    const isAtTop = scrollTop < 50;
+    const hasOverflow = scrollHeight > clientHeight + 100;
     
-    // During streaming, we block auto-scroll to allow users to read fixed content
+    setShowScrollTop(hasOverflow && !isAtTop);
+    setShowScrollBottom(hasOverflow && !isAtBottom);
+
     if (!isStreaming) {
         shouldAutoScrollRef.current = isAtBottom;
     }
+  };
+
+  const scrollToTop = () => {
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const scrollToBottomSmooth = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   };
 
   useEffect(() => {
@@ -703,44 +871,48 @@ const App: React.FC = () => {
     let bufferedText = "";
     let bufferedReasoning = "";
     let bufferedToolCalls: ToolCall[] = [];
-    let animationFrameId: number;
+    let flushTimerId: ReturnType<typeof setTimeout> | null = null;
+    let lastFlushText = "";
+    let lastFlushReasoning = "";
+    let lastFlushToolCallsLen = 0;
+
     const flushBuffer = () => {
+       const hasChange = bufferedText !== lastFlushText 
+           || bufferedReasoning !== lastFlushReasoning
+           || bufferedToolCalls.length !== lastFlushToolCallsLen;
+       
+       if (!hasChange) {
+           flushTimerId = setTimeout(flushBuffer, STREAMING_FLUSH_INTERVAL);
+           return;
+       }
+
+       lastFlushText = bufferedText;
+       lastFlushReasoning = bufferedReasoning;
+       lastFlushToolCallsLen = bufferedToolCalls.length;
+
        setSessions(prev => prev.map(s => {
           if (s.id === sessionId) {
             const msgs = [...s.messages];
             if (msgs.length > 0) {
                 const lastIndex = msgs.length - 1;
-                // Create shallow copy to trigger React update on property change
                 const lastMsg = { ...msgs[lastIndex] };
                 
                 if (lastMsg.role === Role.Model) {
-                     let hasChange = false;
-                     if (lastMsg.text !== bufferedText) {
-                         lastMsg.text = bufferedText;
-                         hasChange = true;
-                     }
-                     if (lastMsg.reasoningText !== bufferedReasoning) {
-                         lastMsg.reasoningText = bufferedReasoning;
-                         hasChange = true;
-                     }
-                     // Always update toolCalls if we have them, as internal props might change (args streaming)
+                     lastMsg.text = bufferedText;
+                     lastMsg.reasoningText = bufferedReasoning;
                      if (bufferedToolCalls.length > 0) {
                          lastMsg.toolCalls = bufferedToolCalls;
-                         hasChange = true;
                      }
-                     
-                     if (hasChange) {
-                         msgs[lastIndex] = lastMsg;
-                     }
+                     msgs[lastIndex] = lastMsg;
                 }
             }
             return { ...s, messages: msgs };
           }
           return s;
        }));
-       animationFrameId = requestAnimationFrame(flushBuffer);
+       flushTimerId = setTimeout(flushBuffer, STREAMING_FLUSH_INTERVAL);
     };
-    animationFrameId = requestAnimationFrame(flushBuffer);
+    flushTimerId = setTimeout(flushBuffer, STREAMING_FLUSH_INTERVAL);
 
     try {
       await streamChatResponse(sessionId, historyMessages.filter(m => m.role !== Role.Model || m.text.length > 0), userText, userAttachments, settings, abortControllerRef.current.signal, (chunkText, chunkToolCalls, chunkReasoningText) => {
@@ -775,7 +947,7 @@ const App: React.FC = () => {
         else updateSessionTitle(sessionId, userText.length > 30 ? userText.slice(0, 30) + '...' : userText);
       }
     } catch (error: any) {
-       cancelAnimationFrame(animationFrameId);
+       if (flushTimerId) clearTimeout(flushTimerId);
        if (error.name === 'AbortError') {
           setSessions(prev => prev.map(s => {
             if (s.id === sessionId) {
@@ -813,7 +985,7 @@ const App: React.FC = () => {
            }));
        }
     } finally {
-      cancelAnimationFrame(animationFrameId);
+      if (flushTimerId) clearTimeout(flushTimerId);
       setIsStreaming(false);
       setStreamingSessionId(null);
       abortControllerRef.current = null;
@@ -1069,7 +1241,7 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col h-full relative bg-white dark:bg-dark-950 transition-colors duration-300">
+      <div className="flex-1 flex flex-col h-full min-h-0 relative bg-white dark:bg-dark-950 transition-colors duration-300">
         {configError && <div className="bg-red-500 text-white text-xs p-2 text-center animate-pulse">{configError}</div>}
         
         <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
@@ -1084,7 +1256,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Chat Area */}
-        <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
+        <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
           {!currentSession || currentSession.messages.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
                 <div className="w-24 h-24 mb-6 rounded-3xl bg-gray-100 dark:bg-dark-900 flex items-center justify-center shadow-sm"><div className="text-gray-900 dark:text-white"><BotIcon className="w-12 h-12" /></div></div>
@@ -1092,105 +1264,57 @@ const App: React.FC = () => {
                 <p className="text-center max-w-md text-gray-500 dark:text-gray-500">{t.welcomeSubtitle}{isMultimodal && <span className="block mt-2 text-indigo-500 text-sm">{t.imageUploadEnabled}</span>}</p>
              </div>
           ) : (
-            currentSession.messages.map((msg, index) => {
-              const isWaitingForFirstToken = isStreaming && streamingSessionId === currentSession.id && msg.role === Role.Model && msg.text === '' && index === currentSession.messages.length - 1;
-              const isAssistantActiveTurn = msg.role === Role.Model && index === currentSession.messages.length - 1;
-
-              return (
-              <div 
-                key={msg.id} 
-                ref={isAssistantActiveTurn ? botTurnRef : null}
-                className={`scroll-mt-4 flex gap-4 max-w-4xl mx-auto ${msg.role === Role.User ? 'flex-row-reverse' : ''}`}
-              >
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm transition-all duration-300 ${
-                    msg.role === Role.User 
-                    ? 'bg-gray-100 dark:bg-dark-800 text-gray-500 dark:text-gray-400' 
-                    : `bg-black dark:bg-white text-white dark:text-black ${isWaitingForFirstToken || (isStreaming && index === currentSession.messages.length - 1) ? 'ring-2 ring-gray-200 dark:ring-gray-700 animate-pulse' : ''}`
-                }`}>
-                  {msg.role === Role.User ? <UserIcon className="w-6 h-6" /> : <BotIcon className="w-6 h-6" />}
-                </div>
-                <div className={`flex flex-col max-w-[85%] lg:max-w-[75%] ${msg.role === Role.User ? 'items-end' : 'items-start'}`}>
-                   <div className="flex items-center gap-2 mb-1 px-1"><span className="text-xs font-semibold text-gray-500 dark:text-gray-400">{msg.role === Role.User ? 'You' : 'ChatClient'}</span></div>
-                   <div className={`px-5 py-3.5 rounded-2xl shadow-sm text-sm md:text-base leading-7 ${msg.role === Role.User ? 'bg-gray-100 dark:bg-dark-800 text-gray-900 dark:text-gray-100 rounded-tr-none' : `text-gray-900 dark:text-gray-100 ${msg.isError ? 'text-red-600 dark:text-red-400' : ''}`}`}>
-                     {msg.attachments?.length ? (
-                       <div className="mb-3 pb-2 border-b border-gray-200 dark:border-gray-700 text-xs flex flex-wrap gap-2">
-                         {msg.attachments.map((file, i) => (
-                            <span key={i} className="flex items-center gap-1 bg-white dark:bg-dark-900 px-2 py-1 rounded border border-gray-200 dark:border-dark-700">
-                              {file.type.startsWith('image/') ? (
-                                  file.content ? 
-                                  <><img src={file.content} className="w-8 h-8 object-cover rounded border border-gray-300 dark:border-gray-700 mr-1" /><span>🖼️ {file.name}</span></> :
-                                  <span className="text-gray-400 italic">🖼️ {file.name} (loading...)</span>
-                              ) : <>📄 {file.name} <span className="text-gray-400 dark:text-gray-500 text-[10px]">({file.tokenCount}t)</span></>}
-                            </span>
-                         ))}
-                       </div>
-                     ) : null}
-                     {msg.role === Role.User && msg.attachments?.some(a => a.type.startsWith('image/')) ? (
-                        <div className="mb-4 flex flex-wrap gap-2">{msg.attachments.filter(a => a.type.startsWith('image/')).map((img, idx) => (
-                            img.content ? <img key={idx} src={img.content} className="max-w-full h-auto max-h-[300px] rounded-lg border border-gray-200 dark:border-gray-700" /> : <div key={idx} className="p-4 border border-dashed border-gray-300 dark:border-gray-700 rounded text-gray-400 text-xs animate-pulse">Loading image...</div>
-                        ))}</div>
-                     ) : null}
-                     {msg.role === Role.Model ? (
-                        <div className="markdown-body">
-                           {isWaitingForFirstToken && <div className="flex items-center gap-1 h-6"><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div></div>}
-                           
-                           {/* Render Tool Calls if present */}
-                           {msg.toolCalls && msg.toolCalls.length > 0 && (
-                             <div className="space-y-2 mb-2">
-                               {msg.toolCalls.map((tc, idx) => (
-                                 <ToolCallDisplay key={tc.id || idx} toolCall={tc} />
-                               ))}
-                             </div>
-                           )}
-
-                           {/* Render Content & Thought */}
-                           {(() => {
-                               const { thought, content, isThinking } = parseMessageContent(msg, isStreaming && isAssistantActiveTurn);
-                               return (
-                                   <>
-                                      {thought !== null && (
-                                          <ThinkingProcess 
-                                              thought={thought}
-                                              isComplete={!isThinking}
-                                              isTruncated={isThinking && !isStreaming}
-                                              lang={lang}
-                                          />
-                                      )}
-                                      <ReactMarkdown 
-                                          remarkPlugins={[remarkGfm]}
-                                          components={markdownComponents}
-                                      >
-                                          {content}
-                                      </ReactMarkdown>
-                                   </>
-                               )
-                           })()}
-                        </div>
-                     ) : <div className="whitespace-pre-wrap">{msg.text}</div>}
-                   </div>
-                   {msg.role === Role.Model && !isStreaming && !msg.isError && (
-                      <div className="flex items-center gap-3 mt-2 px-1 justify-start">
-                            <button onClick={() => handleResend(index)} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><RefreshIcon /> {t.redo}</button>
-                            <button onClick={() => copyToClipboard(msg.text, msg.id)} className={`text-xs font-medium flex items-center gap-1.5 transition-colors px-1 ${copiedMessageId === msg.id ? 'text-green-600 dark:text-green-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}>
-                                {copiedMessageId === msg.id ? <CheckIcon /> : <CopyIcon />} 
-                                {copiedMessageId === msg.id ? t.copied : t.copy}
-                            </button>
-                            <button onClick={handleShare} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><ShareIcon /> {t.share}</button>
-                       </div>
-                   )}
-                   {msg.role === Role.User && !isStreaming && <div className="flex items-center gap-3 mt-2 px-1 justify-end"><button onClick={() => openEditModal(index)} className="text-xs font-medium text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1 transition-colors bg-gray-50 dark:bg-dark-900 px-2 py-1 rounded"><EditIcon /> {t.edit}</button></div>}
-                </div>
-              </div>
-            )})
+            currentSession.messages.map((msg, index) => (
+              <MessageItem
+                key={msg.id}
+                msg={msg}
+                index={index}
+                isStreaming={isStreaming}
+                isStreamingSession={streamingSessionId === currentSession.id}
+                isLastMessage={index === currentSession.messages.length - 1}
+                lang={lang}
+                markdownComponents={markdownComponents}
+                onResend={handleResend}
+                onCopy={copyToClipboard}
+                onShare={handleShare}
+                onEdit={openEditModal}
+                copiedMessageId={copiedMessageId}
+                botTurnRef={botTurnRef}
+              />
+            ))
           )}
           <div ref={messagesEndRef} className="h-4" />
           {/* Restored Large Spacer to ensure slide-up focus works correctly */}
           <div className="h-[80vh] shrink-0" aria-hidden="true" />
         </div>
 
+        {/* Scroll navigation overlays */}
+        {(showScrollTop || showScrollBottom) && (
+          <div className="absolute right-6 bottom-28 md:bottom-32 z-30 flex flex-col gap-2">
+            {showScrollTop && (
+              <button
+                onClick={scrollToTop}
+                className="w-10 h-10 rounded-full bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 shadow-lg flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-dark-700 transition-all"
+                title="Scroll to top"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 12V4M4 7l4-4 4 4"/></svg>
+              </button>
+            )}
+            {showScrollBottom && (
+              <button
+                onClick={scrollToBottomSmooth}
+                className="w-10 h-10 rounded-full bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 shadow-lg flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-dark-700 transition-all"
+                title="Scroll to bottom"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 4v8M4 9l4 4 4-4"/></svg>
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Input Area */}
-        <div className="p-4 md:p-6 bg-white dark:bg-dark-950 transition-colors duration-300 z-20">
-           <div className="max-w-4xl mx-auto relative">
+        <div className="p-4 md:p-6 bg-white dark:bg-dark-950 transition-colors duration-300 z-20 shrink-0">
+           <div className="max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto relative">
               {attachments.length > 0 && (
                 <div className="absolute bottom-full left-0 mb-3 flex flex-wrap gap-2">
                    {attachments.map((f, i) => (
