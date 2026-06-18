@@ -65,7 +65,8 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated, lang }: { thought: 
 
   useEffect(() => {
     if (isComplete && !isTruncated) {
-      setIsOpen(false);
+      const timer = setTimeout(() => setIsOpen(false), 300);
+      return () => clearTimeout(timer);
     } else if (!isComplete && !isTruncated) {
       setIsOpen(true);
     }
@@ -81,7 +82,7 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated, lang }: { thought: 
 
   if (isTruncated && !thought) {
       return (
-          <div className="mb-4 p-3 border-l-4 border-amber-400 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-600 rounded-r-md text-sm text-amber-800 dark:text-amber-200 flex items-start gap-3 shadow-sm animate-in fade-in slide-in-from-top-1">
+          <div className="mb-4 p-3 border-l-4 border-amber-400 glass-subtle rounded-r-md text-sm text-amber-800 dark:text-amber-200 flex items-start gap-3 shadow-sm animate-in fade-in slide-in-from-top-1">
              <span className="text-lg leading-none mt-0.5">⚠️</span>
              <div className="flex flex-col">
                  <span className="font-semibold">{t.thinkingTruncatedTitle}</span>
@@ -116,7 +117,7 @@ const ThinkingProcess = ({ thought, isComplete, isTruncated, lang }: { thought: 
       {isOpen && (
         <div 
           ref={scrollRef}
-          className="mt-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-dark-900 p-3 rounded-md whitespace-pre-wrap leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200 max-h-80 overflow-y-auto custom-scrollbar"
+          className="mt-2 text-sm text-gray-500 dark:text-gray-400 font-mono glass-subtle p-3 rounded-md whitespace-pre-wrap leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200 max-h-80 overflow-y-auto custom-scrollbar"
         >
           {thought}
           {!thought && !isComplete && (
@@ -272,27 +273,10 @@ const sanitizeIncompleteCodeFence = (text: string): string => {
 const StreamingContentRenderer = memo(({ content, remarkPlugins, components }: StreamingContentRendererProps) => {
     const safeContent = sanitizeIncompleteCodeFence(sanitizeStreamingTail(content));
 
-    if (safeContent.length <= STREAMING_MD_THRESHOLD) {
-        return (
-            <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
-                {safeContent}
-            </ReactMarkdown>
-        );
-    }
-
-    const tailSize = Math.min(STREAMING_MD_THRESHOLD, safeContent.length);
-    const breakIdx = safeContent.lastIndexOf('\n\n', safeContent.length - tailSize);
-    const split = breakIdx > 0 ? breakIdx : safeContent.length - tailSize;
-    const head = safeContent.slice(0, split);
-    const tail = safeContent.slice(split);
-
     return (
-        <>
-            <div className="whitespace-pre-wrap leading-7 break-words min-w-0">{head}</div>
-            <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
-                {tail}
-            </ReactMarkdown>
-        </>
+        <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+            {safeContent}
+        </ReactMarkdown>
     );
 });
 
@@ -332,14 +316,14 @@ const MessageItem = memo(({ msg, index, isStreaming, isStreamingSession, isLastM
         >
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm transition-all duration-300 ${
                 msg.role === Role.User 
-                ? 'bg-gray-100 dark:bg-dark-800 text-gray-500 dark:text-gray-400' 
-                : `bg-black dark:bg-white text-white dark:text-black ${isWaitingForFirstToken || isActivelyStreaming ? 'ring-2 ring-gray-200 dark:ring-gray-700 animate-pulse' : ''}`
+                ? 'bg-white/60 dark:bg-white/5 border border-white/40 dark:border-white/10 text-gray-500 dark:text-gray-400' 
+                : `bg-gradient-to-br from-indigo-500 to-purple-600 text-white ${isWaitingForFirstToken || isActivelyStreaming ? 'animate-glow' : ''}`
             }`}>
                 {msg.role === Role.User ? <UserIcon className="w-6 h-6" /> : <BotIcon className="w-6 h-6" />}
             </div>
             <div className={`flex flex-col min-w-0 ${msg.role === Role.User ? 'max-w-[85%] lg:max-w-[80%] items-end' : 'flex-1 items-start'}`}>
                 <div className="flex items-center gap-2 mb-1 px-1"><span className="text-xs font-semibold text-gray-500 dark:text-gray-400">{msg.role === Role.User ? 'You' : 'ChatClient'}</span></div>
-                <div className={`w-full px-5 py-3.5 rounded-2xl shadow-sm text-sm md:text-base leading-7 overflow-hidden ${msg.role === Role.User ? 'bg-gray-100 dark:bg-dark-800 text-gray-900 dark:text-gray-100 rounded-tr-none' : `text-gray-900 dark:text-gray-100 ${msg.isError ? 'text-red-600 dark:text-red-400' : ''}`}`}>
+                <div className={`w-full px-5 py-3.5 rounded-2xl shadow-sm text-sm md:text-base leading-7 overflow-hidden ${msg.role === Role.User ? 'glass-card text-gray-900 dark:text-gray-100 rounded-tr-none' : `text-gray-900 dark:text-gray-100 ${msg.isError ? 'text-red-600 dark:text-red-400' : ''}`}`}>
                     {msg.attachments?.length ? (
                         <div className="mb-3 pb-2 border-b border-gray-200 dark:border-gray-700 text-xs flex flex-wrap gap-2">
                             {msg.attachments.map((file, i) => (
@@ -400,12 +384,12 @@ const MessageItem = memo(({ msg, index, isStreaming, isStreamingSession, isLastM
                 </div>
                 {msg.role === Role.Model && !isStreaming && !msg.isError && (
                     <div className="flex items-center gap-3 mt-2 px-1 justify-start">
-                        <button onClick={() => onResend(index)} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><RefreshIcon /> {t.redo}</button>
-                        <button onClick={() => onCopy(msg.text, msg.id)} className={`text-xs font-medium flex items-center gap-1.5 transition-colors px-1 ${copiedMessageId === msg.id ? 'text-green-600 dark:text-green-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}>
+                        <button onClick={() => onResend(index)} className="text-xs font-medium text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1.5 transition-colors px-2 py-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-900/10"><RefreshIcon /> {t.redo}</button>
+                        <button onClick={() => onCopy(msg.text, msg.id)} className={`text-xs font-medium flex items-center gap-1.5 transition-colors px-2 py-1 rounded-md ${copiedMessageId === msg.id ? 'text-green-600 dark:text-green-400' : 'text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/10'}`}>
                             {copiedMessageId === msg.id ? <CheckIcon /> : <CopyIcon />} 
                             {copiedMessageId === msg.id ? t.copied : t.copy}
                         </button>
-                        <button onClick={onShare} className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1.5 transition-colors px-1"><ShareIcon /> {t.share}</button>
+                        <button onClick={onShare} className="text-xs font-medium text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1.5 transition-colors px-2 py-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-900/10"><ShareIcon /> {t.share}</button>
                     </div>
                 )}
                 {msg.role === Role.User && !isStreaming && <div className="flex items-center gap-3 mt-2 px-1 justify-end"><button onClick={() => onEdit(index)} className="text-xs font-medium text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1 transition-colors bg-gray-50 dark:bg-dark-900 px-2 py-1 rounded"><EditIcon /> {t.edit}</button></div>}
@@ -531,7 +515,9 @@ const App: React.FC = () => {
 
         setSessions(hydratedSessions);
         if (hydratedSessions.length > 0 && !currentSessionId) {
-            setCurrentSessionId(hydratedSessions[0].id);
+            const savedSessionId = localStorage.getItem('chat_client_current_session');
+            const matchesExisting = savedSessionId && hydratedSessions.some(s => s.id === savedSessionId);
+            setCurrentSessionId(matchesExisting ? savedSessionId : hydratedSessions[0].id);
         } else if (hydratedSessions.length === 0) {
             // Will trigger creation in next effect if still empty
         }
@@ -552,10 +538,18 @@ const App: React.FC = () => {
 
   // 2. Default Session Creation
   useEffect(() => {
-    if (isHydrated && sessions.length === 0) {
+    if (isHydrated && sessions.length === 0 && !isStreaming) {
         createNewSession();
     }
-  }, [isHydrated, sessions.length]);
+  }, [isHydrated, sessions.length, isStreaming]);
+
+  // 2b. Safety: if currentSessionId doesn't match any session, fix it
+  useEffect(() => {
+    if (!isHydrated || sessions.length === 0 || isStreaming) return;
+    if (currentSessionId && !sessions.find(s => s.id === currentSessionId)) {
+      setCurrentSessionId(sessions[0].id);
+    }
+  }, [isHydrated, sessions, currentSessionId, isStreaming]);
 
   // 3. PERSISTENCE (Hybrid Strategy)
   const isStreamingRef = useRef(isStreaming);
@@ -612,9 +606,11 @@ const App: React.FC = () => {
             attempts++;
             if (attempts < maxAttempts) setTimeout(loadConfig, 2000);
             else {
-                // We use default language messages here as settings might not be loaded fully, but t is available
-                setConfigError(t.serverConfigError.replace('{url}', DEFAULT_SETTINGS.serverUrl));
-                setTimeout(() => setConfigError(null), 60000);
+                const currentSettings = JSON.parse(localStorage.getItem('chat_client_settings') || '{}');
+                if (!currentSettings.serverUrl || currentSettings.serverUrl === DEFAULT_SETTINGS.serverUrl) {
+                    setConfigError(t.serverConfigError.replace('{url}', DEFAULT_SETTINGS.serverUrl));
+                    setTimeout(() => setConfigError(null), 60000);
+                }
             }
         }
     };
@@ -648,6 +644,12 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('chat_client_settings', JSON.stringify(settings));
   }, [settings]);
+
+  useEffect(() => {
+    if (currentSessionId) {
+      localStorage.setItem('chat_client_current_session', currentSessionId);
+    }
+  }, [currentSessionId]);
 
   const isCustomServer = useCallback((url: string) => {
     if (!url) return false;
@@ -715,6 +717,15 @@ const App: React.FC = () => {
     else root.classList.remove('dark');
   }, [settings.theme]);
 
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') forceUpdate(n => n + 1);
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
   // FIX: Explicitly align to 'end' (bottom) to avoid the spacer pushing content up to the top
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
@@ -725,7 +736,7 @@ const App: React.FC = () => {
       scrollToBottom();
     }
     requestAnimationFrame(() => handleScroll());
-  }, [sessions, currentSessionId, isStreaming]);
+  }, [currentSessionId]);
   
   // Specific effect to handle "Pin to Top" for new turns
   useEffect(() => {
@@ -1042,7 +1053,8 @@ const App: React.FC = () => {
     const userMessage = session.messages[userMsgIndex];
     if (settings.contextCache) {
         const newSessionId = uuidv4();
-        setSessions(prev => prev.map(s => s.id === session.id ? { ...s, id: newSessionId, messages: historyBeforeTurn } : s));
+        const newSession: ChatSession = { id: newSessionId, title: session.title, messages: historyBeforeTurn, lastUpdated: Date.now() };
+        setSessions(prev => [newSession, ...prev.filter(s => s.id !== session.id)]);
         setCurrentSessionId(newSessionId);
         setContextStats(null);
         usageFailuresRef.current = 0;
@@ -1067,7 +1079,8 @@ const App: React.FC = () => {
       const historyBeforeTurn = session.messages.slice(0, editingMessage.index);
       const originalMessage = session.messages[editingMessage.index];
       const newSessionId = uuidv4();
-      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, id: newSessionId, messages: historyBeforeTurn } : s));
+      const newSession: ChatSession = { id: newSessionId, title: session.title, messages: historyBeforeTurn, lastUpdated: Date.now() };
+      setSessions(prev => [newSession, ...prev.filter(s => s.id !== currentSessionId)]);
       setCurrentSessionId(newSessionId);
       setContextStats(null);
       usageFailuresRef.current = 0;
@@ -1190,16 +1203,29 @@ const App: React.FC = () => {
   const currentSession = getCurrentSession();
 
   if (!isHydrated) {
-      return <div className="flex h-screen w-full items-center justify-center bg-white dark:bg-dark-950 text-gray-500">Loading chats...</div>;
+      return (
+        <div className="flex h-screen w-full items-center justify-center app-gradient text-gray-500">
+          <div className="flex flex-col items-center gap-4 animate-fade-in">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg animate-glow">
+              <span className="text-white font-bold text-2xl">C</span>
+            </div>
+            <span className="text-sm font-medium text-gray-400">Loading chats...</span>
+          </div>
+        </div>
+      );
   }
 
   return (
-    <div className="flex h-screen w-full bg-white dark:bg-dark-950 text-gray-900 dark:text-gray-100 transition-colors duration-300">
+    <div className="flex h-screen w-full app-gradient text-gray-900 dark:text-gray-100 relative overflow-hidden">
+      {/* Animated background orbs */}
+      <div className="bg-orb w-96 h-96 bg-indigo-200 dark:bg-indigo-900 top-[-10%] left-[-5%]" />
+      <div className="bg-orb w-80 h-80 bg-purple-200 dark:bg-purple-900 bottom-[-10%] right-[-5%]" style={{animationDelay: '-7s'}} />
+      <div className="bg-orb w-64 h-64 bg-blue-200 dark:bg-blue-900 top-[40%] right-[20%]" style={{animationDelay: '-13s'}} />
       
       {/* Sidebar */}
-      <div className="w-64 bg-gray-50 dark:bg-dark-900 border-r border-gray-200 dark:border-dark-800 flex flex-col hidden md:flex transition-all duration-300">
+      <div className="w-64 glass-sidebar flex flex-col hidden md:flex z-10">
         <div className="p-4 flex items-center gap-3 mb-2">
-           <div className="w-10 h-10 bg-black dark:bg-white rounded-xl flex items-center justify-center shadow-md text-white dark:text-black font-bold text-xl">
+           <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg text-white font-bold text-xl animate-glow">
                <span>C</span>
            </div>
            <div>
@@ -1207,13 +1233,13 @@ const App: React.FC = () => {
            </div>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
-          <button onClick={() => createNewSession()} disabled={isStreaming} className={`w-full flex items-center justify-center gap-2 px-4 py-3 bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 text-gray-900 dark:text-gray-100 rounded-xl transition-all text-sm font-medium shadow-sm mb-4 group ${isStreaming ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-dark-700'}`}>
-            <span className="text-xl leading-none font-light text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">+</span> 
+          <button onClick={() => createNewSession()} disabled={isStreaming} className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-all text-sm font-medium mb-4 group border border-indigo-200/30 dark:border-indigo-500/10 bg-gradient-to-r from-indigo-50/60 to-purple-50/60 dark:from-indigo-950/20 dark:to-purple-950/20 text-gray-900 dark:text-gray-100 shadow-sm hover:shadow-md ${isStreaming ? 'opacity-50 cursor-not-allowed' : 'hover:from-indigo-100/70 hover:to-purple-100/70 dark:hover:from-indigo-900/30 dark:hover:to-purple-900/30'}`}>
+            <span className="text-xl leading-none font-light text-indigo-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition-colors">+</span> 
             <span>{t.newChat}</span>
           </button>
           <div className="text-xs font-bold text-gray-400 uppercase tracking-wider px-3 mb-2 mt-6">{t.history}</div>
           {sessions.map(session => (
-            <div key={session.id} onClick={() => { setCurrentSessionId(session.id); setContextStats(null); }} className={`group relative flex items-center px-3 py-2.5 text-sm rounded-lg transition-all cursor-pointer ${currentSessionId === session.id ? 'bg-gray-200 dark:bg-dark-800 text-gray-900 dark:text-white font-medium shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-dark-800'}`}>
+            <div key={session.id} onClick={() => { setCurrentSessionId(session.id); setContextStats(null); }} className={`group relative flex items-center px-3 py-2.5 text-sm rounded-lg transition-all cursor-pointer ${currentSessionId === session.id ? 'bg-white/60 dark:bg-white/5 shadow-sm border border-white/40 dark:border-white/5 text-gray-900 dark:text-white font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-white/30 dark:hover:bg-white/3'}`}>
               <span className="truncate flex-1 pr-6">{session.title}</span>
               <div className="absolute right-2 flex items-center gap-1">
                  {streamingSessionId === session.id ? <div className="text-indigo-500"><WritingIcon /></div> : (
@@ -1229,24 +1255,24 @@ const App: React.FC = () => {
             </div>
           ))}
         </div>
-        <div className="p-4 border-t border-gray-200 dark:border-dark-800 space-y-1">
-          <button onClick={toggleTheme} className="flex items-center gap-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors text-sm w-full px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-dark-800">
+        <div className="p-4 border-t border-white/10 dark:border-white/5 space-y-1">
+          <button onClick={toggleTheme} className="flex items-center gap-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors text-sm w-full px-3 py-2 rounded-lg hover:bg-white/40 dark:hover:bg-white/5">
             {settings.theme === 'dark' ? <SunIcon /> : <MoonIcon />}
             <span>{settings.theme === 'dark' ? t.lightMode : t.darkMode}</span>
           </button>
-          <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors text-sm w-full px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-dark-800">
+          <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors text-sm w-full px-3 py-2 rounded-lg hover:bg-white/40 dark:hover:bg-white/5">
             <SettingsIcon />
             <span>{t.settings}</span>
           </button>
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col h-full min-h-0 relative bg-white dark:bg-dark-950 transition-colors duration-300">
-        {configError && <div className="bg-red-500 text-white text-xs p-2 text-center animate-pulse">{configError}</div>}
+      <div className="flex-1 flex flex-col h-full min-h-0 relative z-10">
+        {configError && <div className="bg-red-500/90 backdrop-blur-sm text-white text-xs p-2 text-center animate-pulse">{configError}</div>}
         
-        <div className="md:hidden p-4 border-b border-gray-200 dark:border-dark-800 flex justify-between items-center bg-white dark:bg-dark-900 z-10">
+        <div className="md:hidden p-4 border-b border-white/10 dark:border-white/5 flex justify-between items-center glass z-10">
            <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-black dark:bg-white rounded-lg flex items-center justify-center text-white dark:text-black font-bold">C</div>
+                <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold">C</div>
                 <span className="font-bold text-gray-900 dark:text-white">ChatClient</span>
            </div>
            <div className="flex gap-4">
@@ -1258,8 +1284,8 @@ const App: React.FC = () => {
         {/* Chat Area */}
         <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth">
           {!currentSession || currentSession.messages.length === 0 ? (
-             <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
-                <div className="w-24 h-24 mb-6 rounded-3xl bg-gray-100 dark:bg-dark-900 flex items-center justify-center shadow-sm"><div className="text-gray-900 dark:text-white"><BotIcon className="w-12 h-12" /></div></div>
+             <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600 animate-fade-in">
+                <div className="w-24 h-24 mb-6 rounded-3xl bg-gradient-to-br from-indigo-500/10 to-purple-500/10 dark:from-indigo-500/5 dark:to-purple-500/5 flex items-center justify-center shadow-sm border border-indigo-100/50 dark:border-indigo-500/10"><div className="text-indigo-600 dark:text-indigo-400"><BotIcon className="w-12 h-12" /></div></div>
                 <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-200 mb-2">{t.welcomeTitle}</h3>
                 <p className="text-center max-w-md text-gray-500 dark:text-gray-500">{t.welcomeSubtitle}{isMultimodal && <span className="block mt-2 text-indigo-500 text-sm">{t.imageUploadEnabled}</span>}</p>
              </div>
@@ -1294,7 +1320,7 @@ const App: React.FC = () => {
             {showScrollTop && (
               <button
                 onClick={scrollToTop}
-                className="w-10 h-10 rounded-full bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 shadow-lg flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-dark-700 transition-all"
+                className="w-10 h-10 rounded-full glass flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all hover:shadow-lg"
                 title="Scroll to top"
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 12V4M4 7l4-4 4 4"/></svg>
@@ -1303,7 +1329,7 @@ const App: React.FC = () => {
             {showScrollBottom && (
               <button
                 onClick={scrollToBottomSmooth}
-                className="w-10 h-10 rounded-full bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 shadow-lg flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-dark-700 transition-all"
+                className="w-10 h-10 rounded-full glass flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all hover:shadow-lg"
                 title="Scroll to bottom"
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 4v8M4 9l4 4 4-4"/></svg>
@@ -1313,12 +1339,12 @@ const App: React.FC = () => {
         )}
 
         {/* Input Area */}
-        <div className="p-4 md:p-6 bg-white dark:bg-dark-950 transition-colors duration-300 z-20 shrink-0">
+        <div className="p-4 md:p-6 z-20 shrink-0">
            <div className="max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto relative">
               {attachments.length > 0 && (
                 <div className="absolute bottom-full left-0 mb-3 flex flex-wrap gap-2">
                    {attachments.map((f, i) => (
-                     <div key={i} className="flex items-center gap-2 bg-gray-100 dark:bg-dark-800 text-xs text-gray-600 dark:text-gray-300 pl-3 pr-2 py-1.5 rounded-full border border-gray-200 dark:border-dark-700 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+                     <div key={i} className="flex items-center gap-2 glass-subtle text-xs text-gray-600 dark:text-gray-300 pl-3 pr-2 py-1.5 rounded-full shadow-sm animate-slide-up">
                         {f.type.startsWith('image/') ? <img src={f.content} className="w-6 h-6 object-cover rounded-full border border-gray-300" /> : <span>📄</span>}
                         <span className="truncate max-w-[120px] font-medium">{f.name}</span>
                         {!f.type.startsWith('image/') && <span className="text-gray-400 text-[10px]">{f.tokenCount}t</span>}
@@ -1327,15 +1353,15 @@ const App: React.FC = () => {
                    ))}
                 </div>
               )}
-              <div className="relative flex items-end gap-2 bg-gray-50 dark:bg-dark-900 border border-gray-300 dark:border-dark-700 rounded-3xl shadow-sm focus-within:shadow-md focus-within:border-gray-400 dark:focus-within:border-gray-500 transition-all p-2">
-                 <button onClick={() => fileInputRef.current?.click()} className="p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors rounded-full hover:bg-gray-200 dark:hover:bg-dark-800 flex-shrink-0">{isMultimodal ? <ImageIcon /> : <PaperClipIcon />}</button>
+              <div className="relative flex items-end gap-2 glass-input rounded-3xl p-2 focus-within:shadow-lg focus-within:border-indigo-300/50 dark:focus-within:border-indigo-500/20 transition-all duration-300">
+                 <button onClick={() => fileInputRef.current?.click()} className="p-3 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors rounded-full hover:bg-indigo-50 dark:hover:bg-indigo-950/30 flex-shrink-0">{isMultimodal ? <ImageIcon /> : <PaperClipIcon />}</button>
                  <input type="file" multiple ref={fileInputRef} className="hidden" accept=".txt,.md,.markdown,.json,.csv,.log,.xml,.yaml,.yml,.toml,.ini,.cfg,.conf,.env,.js,.jsx,.ts,.tsx,.html,.css,.scss,.less,.py,.java,.c,.cpp,.h,.hpp,.cc,.cs,.go,.rs,.rb,.php,.swift,.kt,.sql,.sh,.bash,.bat,.ps1,.dockerfile,.cu,.cuh,image/*" onChange={handleFileUpload} />
                  <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }} placeholder={t.messagePlaceholder} className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none py-3 px-4 max-h-[200px] min-h-[24px] leading-6 custom-scrollbar" rows={1} />
-                 {isStreaming && currentSessionId === streamingSessionId ? <button onClick={handleStopGeneration} title={t.stopGeneration} className="p-2 mb-1 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors animate-pulse flex-shrink-0"><StopIcon /></button> : <button onClick={() => handleSendMessage()} disabled={!input.trim() && attachments.length === 0} className={`p-2 mb-1 rounded-full transition-colors shadow-md flex-shrink-0 ${isStreaming ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-gray-900 dark:bg-white text-white dark:text-black hover:bg-gray-700 dark:hover:bg-gray-200'}`}><SendIcon /></button>}
+                 {isStreaming && currentSessionId === streamingSessionId ? <button onClick={handleStopGeneration} title={t.stopGeneration} className="p-2 mb-1 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors animate-pulse flex-shrink-0"><StopIcon /></button> : <button onClick={() => handleSendMessage()} disabled={!input.trim() && attachments.length === 0} className={`p-2 mb-1 rounded-full transition-all shadow-md flex-shrink-0 ${isStreaming ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:from-indigo-600 hover:to-purple-700 hover:shadow-lg'}`}><SendIcon /></button>}
               </div>
               <div className="flex flex-col items-center mt-3 gap-1">
                  {settings.contextCache && (contextStats || kvStats || swapStats) && (
-                    <div className="flex items-center gap-3 px-3 py-1 rounded-full bg-gray-100 dark:bg-dark-900 border border-gray-200 dark:border-dark-800 text-[10px] font-mono text-gray-500 dark:text-gray-400 animate-in fade-in slide-in-from-bottom-2">
+                    <div className="flex items-center gap-3 px-3 py-1 rounded-full glass-subtle text-[10px] font-mono text-gray-500 dark:text-gray-400 animate-slide-up">
                         {contextStats?.status && <div className="flex items-center pr-1">{contextStats.status === 'Running' ? <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title={t.status_running} /> : contextStats.status === 'Waiting' ? <div title={t.status_waiting}><WaitingIcon /></div> : contextStats.status === 'Cached' ? <div title={t.status_cached}><CachedIcon /></div> : contextStats.status === 'Swapped' ? <div title={t.status_swapped}><SwappedIcon /></div> : <div title={t.status_finished}><FinishedIcon /></div>}</div>}
                         {contextStats && <div className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${contextStats.used > contextStats.total * 0.9 ? 'bg-red-500' : 'bg-green-500'}`}></span><span>CTX: {contextStats.used.toLocaleString()} / {contextStats.total.toLocaleString()}</span></div>}
                         {contextStats && (kvStats || swapStats) && <div className="w-px h-3 bg-gray-300 dark:bg-dark-700"></div>}
